@@ -14,46 +14,51 @@ echo [1/4] Looking for Stardew Valley...
 
 set "GAMEPATH="
 
-:: Check common Steam paths
-for %%P in (
-    "C:\Program Files (x86)\Steam\steamapps\common\Stardew Valley"
-    "C:\Program Files\Steam\steamapps\common\Stardew Valley"
-    "D:\Steam\steamapps\common\Stardew Valley"
-    "D:\SteamLibrary\steamapps\common\Stardew Valley"
-    "E:\Steam\steamapps\common\Stardew Valley"
-    "E:\SteamLibrary\steamapps\common\Stardew Valley"
-    "D:\Games\Steam\steamapps\common\Stardew Valley"
-    "D:\Games\SteamLibrary\steamapps\common\Stardew Valley"
-) do (
-    if exist "%%~P\Stardew Valley.dll" (
-        set "GAMEPATH=%%~P"
-        goto :found_game
-    )
+:: Check common Steam paths (using individual checks to avoid parentheses issues in for loops)
+if exist "C:\Program Files (x86)\Steam\steamapps\common\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=C:\Program Files (x86)\Steam\steamapps\common\Stardew Valley"
+    goto :found_game
+)
+if exist "C:\Program Files\Steam\steamapps\common\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=C:\Program Files\Steam\steamapps\common\Stardew Valley"
+    goto :found_game
+)
+if exist "D:\Steam\steamapps\common\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=D:\Steam\steamapps\common\Stardew Valley"
+    goto :found_game
+)
+if exist "D:\SteamLibrary\steamapps\common\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=D:\SteamLibrary\steamapps\common\Stardew Valley"
+    goto :found_game
+)
+if exist "E:\Steam\steamapps\common\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=E:\Steam\steamapps\common\Stardew Valley"
+    goto :found_game
+)
+if exist "E:\SteamLibrary\steamapps\common\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=E:\SteamLibrary\steamapps\common\Stardew Valley"
+    goto :found_game
+)
+if exist "D:\Games\Steam\steamapps\common\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=D:\Games\Steam\steamapps\common\Stardew Valley"
+    goto :found_game
+)
+if exist "D:\Games\SteamLibrary\steamapps\common\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=D:\Games\SteamLibrary\steamapps\common\Stardew Valley"
+    goto :found_game
 )
 
-:: Try to find via Steam's libraryfolders.vdf
-for %%S in (
-    "C:\Program Files (x86)\Steam"
-    "C:\Program Files\Steam"
-    "D:\Steam"
-) do (
-    if exist "%%~S\steamapps\libraryfolders.vdf" (
-        for /f "tokens=2 delims=	 " %%L in ('findstr /C:"path" "%%~S\steamapps\libraryfolders.vdf" 2^>nul') do (
-            set "LIBPATH=%%~L"
-            set "LIBPATH=!LIBPATH:\\=\!"
-            if exist "!LIBPATH!\steamapps\common\Stardew Valley\Stardew Valley.dll" (
-                set "GAMEPATH=!LIBPATH!\steamapps\common\Stardew Valley"
-                goto :found_game
-            )
-        )
-    )
+:: Check GOG default path
+if exist "C:\Program Files (x86)\GOG Galaxy\Games\Stardew Valley\Stardew Valley.dll" (
+    set "GAMEPATH=C:\Program Files (x86)\GOG Galaxy\Games\Stardew Valley"
+    goto :found_game
 )
 
 echo.
-echo  [ERROR] Could not find Stardew Valley automatically.
+echo  Could not find Stardew Valley automatically.
 echo.
-echo  Please drag your Stardew Valley folder onto this window
-echo  (or type/paste the full path) and press Enter:
+echo  Please type or paste the full path to your Stardew Valley folder
+echo  and press Enter:
 echo.
 echo  Example: C:\Program Files (x86)\Steam\steamapps\common\Stardew Valley
 echo.
@@ -61,6 +66,12 @@ set /p "GAMEPATH=Path: "
 
 :: Remove surrounding quotes if present
 set "GAMEPATH=!GAMEPATH:"=!"
+
+if "!GAMEPATH!"=="" (
+    echo.
+    echo  [ERROR] No path entered.
+    goto :error_exit
+)
 
 if not exist "!GAMEPATH!\Stardew Valley.dll" (
     echo.
@@ -94,16 +105,16 @@ where dotnet >nul 2>&1
 if errorlevel 1 (
     echo  .NET SDK not found. Installing...
     echo.
-    
+
     :: Download .NET 8.0 SDK installer
     echo  Downloading .NET 8.0 SDK...
     powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://dot.net/v1/dotnet-install.ps1' -OutFile '%TEMP%\dotnet-install.ps1'}" 2>nul
 
     if exist "%TEMP%\dotnet-install.ps1" (
-        echo  Installing .NET 8.0 SDK (this may take a few minutes)...
+        echo  Installing .NET 8.0 SDK (this may take a few minutes^)...
         powershell -ExecutionPolicy Bypass -File "%TEMP%\dotnet-install.ps1" -Channel 8.0 -InstallDir "%USERPROFILE%\.dotnet" 2>nul
         set "PATH=%USERPROFILE%\.dotnet;%PATH%"
-        
+
         where dotnet >nul 2>&1
         if errorlevel 1 (
             set "DOTNET=%USERPROFILE%\.dotnet\dotnet.exe"
@@ -182,7 +193,7 @@ set "BUILDOUT=!MODPROJECT!bin\Release\net8.0"
 if not exist "!BUILDOUT!\ZoneLockChallenge.dll" (
     echo  [ERROR] Build output not found at: !BUILDOUT!
     echo  Trying to find it...
-    
+
     :: ModBuildConfig might have deployed it directly
     if exist "!MODSDIR!\ZoneLockChallenge.dll" (
         echo  Mod was auto-deployed by SMAPI build tools!
@@ -197,7 +208,7 @@ copy /y "!MODPROJECT!manifest.json" "!MODSDIR!\" >nul
 
 :: Copy config if it doesn't already exist (don't overwrite custom config)
 if not exist "!MODSDIR!\config.json" (
-    echo  (First install - default config will be generated on first run)
+    echo  (First install - default config will be generated on first run^)
 )
 
 :success

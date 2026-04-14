@@ -1,0 +1,11 @@
+{
+    "Name": "Zone Lock Challenge",
+    "Author": "Peter",
+    "Version": "1.0.0",
+    "Description": "Locks all zones except the farm. Unlock them permanently via bundles or buy daily tickets. Designed for multiplayer challenge runs.",
+    "UniqueID": "Peter.ZoneLockChallenge",
+    "EntryDll": "ZoneLockChallenge.dll",
+    "MinimumApiVersion": "4.0.0",
+    "MinimumGameVersion": "1.6.14",
+    "UpdateKeys": []
+}

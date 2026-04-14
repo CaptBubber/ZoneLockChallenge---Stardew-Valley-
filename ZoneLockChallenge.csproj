@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableHarmony>true</EnableHarmony>
+    <RootNamespace>ZoneLockChallenge</RootNamespace>
+    <AssemblyName>ZoneLockChallenge</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.*" />
+  </ItemGroup>
+
+</Project>

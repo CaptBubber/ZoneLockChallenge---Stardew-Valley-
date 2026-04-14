@@ -103,8 +103,44 @@ namespace ZoneLockChallenge
 
         public bool ArePrerequisitesMet(ZoneDefinition zone)
         {
-            if (string.IsNullOrEmpty(zone.RequiresZone)) return true;
-            return State.UnlockedZones.Contains(zone.RequiresZone);
+            if (!string.IsNullOrEmpty(zone.RequiresZone) && !State.UnlockedZones.Contains(zone.RequiresZone))
+                return false;
+            if (!string.IsNullOrEmpty(zone.RequiredSkill) && zone.RequiredSkillLevel > 0)
+            {
+                int collectiveLevel = GetCollectiveSkillLevel(zone.RequiredSkill);
+                if (collectiveLevel < zone.RequiredSkillLevel)
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>Get the sum of a given skill level across all farmers (collective skill gate).</summary>
+        public int GetCollectiveSkillLevel(string skillName)
+        {
+            int total = 0;
+            foreach (var farmer in Game1.getAllFarmers())
+            {
+                total += skillName switch
+                {
+                    "Farming" => farmer.FarmingLevel,
+                    "Mining" => farmer.MiningLevel,
+                    "Fishing" => farmer.FishingLevel,
+                    "Foraging" => farmer.ForagingLevel,
+                    "Combat" => farmer.CombatLevel,
+                    _ => 0
+                };
+            }
+            return total;
+        }
+
+        /// <summary>Get the gold cost for a zone, scaled by number of already-unlocked zones.</summary>
+        public int GetScaledMoneyCost(ZoneDefinition zone)
+        {
+            if (config.CostScalingPercent <= 0)
+                return zone.MoneyCost;
+            int unlockedCount = State.UnlockedZones.Count;
+            double multiplier = 1.0 + (config.CostScalingPercent / 100.0) * unlockedCount;
+            return (int)(zone.MoneyCost * multiplier);
         }
 
         public bool TryPurchase(string zoneId, Farmer buyer)
@@ -123,13 +159,15 @@ namespace ZoneLockChallenge
             if (zone == null) return false;
             if (!ArePrerequisitesMet(zone)) return false;
             if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId)) return false;
-            if (buyer.Money < zone.MoneyCost) return false;
+
+            int scaledCost = GetScaledMoneyCost(zone);
+            if (buyer.Money < scaledCost) return false;
 
             foreach (var itemCost in zone.Items)
                 if (CountItemInInventory(buyer, itemCost.ItemId) < itemCost.Count)
                     return false;
 
-            buyer.Money -= zone.MoneyCost;
+            buyer.Money -= scaledCost;
             foreach (var itemCost in zone.Items)
                 RemoveItemsFromInventory(buyer, itemCost.ItemId, itemCost.Count);
 

@@ -6,6 +6,10 @@ namespace ZoneLockChallenge
     {
         public string OpenMenuKey { get; set; } = "K";
         public bool ShowBlockedMessage { get; set; } = true;
+
+        /// <summary>Extra percentage added to zone gold cost per already-unlocked zone. 0 = no scaling.</summary>
+        public int CostScalingPercent { get; set; } = 10;
+
         public MinecartConfig BeachMinecart { get; set; } = new();
 
         public List<ZoneDefinition> Zones { get; set; } = new()
@@ -54,11 +58,12 @@ namespace ZoneLockChallenge
             new ZoneDefinition
             {
                 ZoneId = "Mine", DisplayName = "The Mines", BundleName = "Spelunker's Bundle",
-                Description = "All 120 floors of the mines. Requires Mountain to be unlocked first.",
+                Description = "All 120 floors of the mines. Requires Mountain unlocked and collective Mining skill.",
                 UnlockType = "permanent", MoneyCost = 15000,
                 Items = new() { new ItemCost { ItemId = "(O)334", DisplayName = "Copper Bar", Count = 5 } },
                 LocationNames = new() { "Mine" }, LocationPrefixes = new() { "UndergroundMine" },
                 RequiresZone = "Mountain",
+                RequiredSkill = "Mining", RequiredSkillLevel = 5,
                 Plate = new PlateTile { LocationName = "Mountain", X = 54, Y = 5 }
             },
             new ZoneDefinition
@@ -114,6 +119,12 @@ namespace ZoneLockChallenge
         public List<string> LocationPrefixes { get; set; } = new();
         public string RequiresZone { get; set; } = null;
         public PlateTile Plate { get; set; } = null;
+
+        /// <summary>Optional skill name required (e.g. "Mining", "Farming", "Fishing", "Foraging", "Combat"). Collective level across all players is checked.</summary>
+        public string RequiredSkill { get; set; } = null;
+
+        /// <summary>The collective skill level required (sum of all players' levels for the given skill).</summary>
+        public int RequiredSkillLevel { get; set; } = 0;
     }
 
     public class ItemCost

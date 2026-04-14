@@ -161,10 +161,25 @@ namespace ZoneLockChallenge
             { ShowStatus("You already have a ticket for today!", true); return; }
             if (!stateManager.ArePrerequisitesMet(zone))
             {
-                var req = config.Zones.FirstOrDefault(z => z.ZoneId == zone.RequiresZone);
-                ShowStatus($"Requires: {req?.DisplayName ?? zone.RequiresZone}", true); return;
+                // Check which prerequisite is not met for a specific error message
+                if (!string.IsNullOrEmpty(zone.RequiresZone) && !stateManager.IsZonePermanentlyUnlocked(zone.RequiresZone))
+                {
+                    var req = config.Zones.FirstOrDefault(z => z.ZoneId == zone.RequiresZone);
+                    ShowStatus($"Requires: {req?.DisplayName ?? zone.RequiresZone}", true);
+                }
+                else if (!string.IsNullOrEmpty(zone.RequiredSkill) && zone.RequiredSkillLevel > 0)
+                {
+                    int current = stateManager.GetCollectiveSkillLevel(zone.RequiredSkill);
+                    ShowStatus($"Need collective {zone.RequiredSkill} level {zone.RequiredSkillLevel} (have {current})", true);
+                }
+                else
+                {
+                    ShowStatus("Prerequisites not met!", true);
+                }
+                return;
             }
-            if (farmer.Money < zone.MoneyCost) { ShowStatus("Not enough gold!", true); return; }
+            int scaledCost = stateManager.GetScaledMoneyCost(zone);
+            if (farmer.Money < scaledCost) { ShowStatus("Not enough gold!", true); return; }
 
             foreach (var item in zone.Items)
             {
@@ -296,10 +311,14 @@ namespace ZoneLockChallenge
             b.DrawString(Game1.smallFont, $"Type: {typeLabel}", new Vector2(x, y), Color.Black);
             y += 32;
 
-            // Gold cost with coin icon
-            bool canAffordGold = Game1.player.Money >= zone.MoneyCost;
+            // Gold cost with coin icon (scaled by number of unlocked zones)
+            int scaledCost = stateManager.GetScaledMoneyCost(zone);
+            bool canAffordGold = Game1.player.Money >= scaledCost;
             b.Draw(Game1.mouseCursors, new Vector2(x, y - 2), new Rectangle(193, 373, 9, 10), Color.White, 0f, Vector2.Zero, 3f, SpriteEffects.None, 1f);
-            b.DrawString(Game1.smallFont, $" {zone.MoneyCost:N0}g", new Vector2(x + 30, y), canAffordGold ? Color.DarkGreen : Color.DarkRed);
+            string costText = scaledCost != zone.MoneyCost
+                ? $" {scaledCost:N0}g (base {zone.MoneyCost:N0}g)"
+                : $" {scaledCost:N0}g";
+            b.DrawString(Game1.smallFont, costText, new Vector2(x + 30, y), canAffordGold ? Color.DarkGreen : Color.DarkRed);
             y += 36;
 
             // Item costs with icons
@@ -318,11 +337,11 @@ namespace ZoneLockChallenge
                     Color itemColor = hasEnough ? Color.DarkGreen : Color.DarkRed;
                     int textX = x + 8;
 
-                    // Draw item icon
+                    // Draw item icon (offset to align center of 32x32 draw area with text baseline)
                     if (itemCache.TryGetValue(item.ItemId, out var cachedItem))
                     {
-                        cachedItem.drawInMenu(b, new Vector2(x, y - 6), 0.5f, 1f, 0.9f, StackDrawType.Hide);
-                        textX = x + 36;
+                        cachedItem.drawInMenu(b, new Vector2(x - 8, y - 14), 0.5f, 1f, 0.9f, StackDrawType.Hide);
+                        textX = x + 28;
                     }
 
                     string check = hasEnough ? "\u2713 " : "";
@@ -336,12 +355,22 @@ namespace ZoneLockChallenge
                 y += 32;
             }
 
-            // Prerequisites
+            // Prerequisites: zone requirement
             if (!string.IsNullOrEmpty(zone.RequiresZone))
             {
                 var req = config.Zones.FirstOrDefault(z => z.ZoneId == zone.RequiresZone);
-                bool met = stateManager.ArePrerequisitesMet(zone);
-                b.DrawString(Game1.smallFont, $"Requires: {req?.DisplayName ?? zone.RequiresZone}", new Vector2(x, y), met ? Color.DarkGreen : Color.DarkRed);
+                bool zoneMet = stateManager.IsZonePermanentlyUnlocked(zone.RequiresZone);
+                b.DrawString(Game1.smallFont, $"Requires: {req?.DisplayName ?? zone.RequiresZone}", new Vector2(x, y), zoneMet ? Color.DarkGreen : Color.DarkRed);
+                y += 32;
+            }
+
+            // Prerequisites: collective skill requirement
+            if (!string.IsNullOrEmpty(zone.RequiredSkill) && zone.RequiredSkillLevel > 0)
+            {
+                int currentLevel = stateManager.GetCollectiveSkillLevel(zone.RequiredSkill);
+                bool skillMet = currentLevel >= zone.RequiredSkillLevel;
+                b.DrawString(Game1.smallFont, $"Collective {zone.RequiredSkill}: {currentLevel}/{zone.RequiredSkillLevel}",
+                    new Vector2(x, y), skillMet ? Color.DarkGreen : Color.DarkRed);
                 y += 32;
             }
 

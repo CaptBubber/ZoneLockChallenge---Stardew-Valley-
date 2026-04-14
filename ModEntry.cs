@@ -14,9 +14,9 @@ namespace ZoneLockChallenge
         private ModConfig config;
         private ZoneStateManager stateManager;
         private bool isWarpingBack;
+        private int warpBackFramesLeft;
 
-        // Track player's last safe position for warp-back
-        private string lastSafeLocation = "Farm";
+        // Track player's last tile position (updated before game processes warps)
         private int lastSafeX = 64;
         private int lastSafeY = 15;
 
@@ -42,6 +42,7 @@ namespace ZoneLockChallenge
             helper.Events.Input.ButtonPressed += OnButtonPressed;
             helper.Events.Multiplayer.PeerConnected += OnPeerConnected;
             helper.Events.Display.RenderedWorld += OnRenderedWorld;
+            helper.Events.GameLoop.UpdateTicking += OnUpdateTicking;
             helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
 
             helper.ConsoleCommands.Add("zlc_moveplate",
@@ -77,28 +78,38 @@ namespace ZoneLockChallenge
             }
         }
 
-        private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e) => isWarpingBack = false;
+        private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e) { isWarpingBack = false; warpBackFramesLeft = 0; }
 
         private void OnPeerConnected(object sender, PeerConnectedEventArgs e)
         {
             if (Context.IsMainPlayer) stateManager.BroadcastState();
         }
 
-        // ── Animation tick ───────────────────────────────────────────
+        // ── Tick handlers ────────────────────────────────────────────
 
+        /// <summary>Fires BEFORE the game update — save position while player is still in their current location.</summary>
+        private void OnUpdateTicking(object sender, UpdateTickingEventArgs e)
+        {
+            if (Context.IsWorldReady && !isWarpingBack && Game1.player != null)
+            {
+                lastSafeX = (int)Game1.player.Tile.X;
+                lastSafeY = (int)Game1.player.Tile.Y;
+            }
+        }
+
+        /// <summary>Fires AFTER the game update — animation timer and warp flag countdown.</summary>
         private void OnUpdateTicked(object sender, UpdateTickedEventArgs e)
         {
-            if (Context.IsWorldReady)
-            {
-                plateAnimTimer += (float)(1.0 / 60.0); // ~60 ticks per second
+            if (!Context.IsWorldReady) return;
 
-                // Track last safe position for warp-back (only when not mid-warp)
-                if (!isWarpingBack && Game1.player?.currentLocation != null)
-                {
-                    lastSafeLocation = Game1.currentLocation.Name;
-                    lastSafeX = (int)Game1.player.Tile.X;
-                    lastSafeY = (int)Game1.player.Tile.Y;
-                }
+            plateAnimTimer += (float)(1.0 / 60.0);
+
+            // Count down warp-back frames (wait for return warp to fully complete)
+            if (warpBackFramesLeft > 0)
+            {
+                warpBackFramesLeft--;
+                if (warpBackFramesLeft == 0)
+                    isWarpingBack = false;
             }
         }
 
@@ -108,46 +119,35 @@ namespace ZoneLockChallenge
         {
             if (!e.IsLocalPlayer || isWarpingBack) return;
 
-            string locationName = e.NewLocation.Name;
+            string newLocationName = e.NewLocation.Name;
             string oldLocationName = e.OldLocation.Name;
 
-            if (IsFarmLocation(locationName)) return;
+            if (IsFarmLocation(newLocationName)) return;
 
             long farmerId = Game1.player.UniqueMultiplayerID;
-            var zone = stateManager.GetZoneForLocation(locationName);
+            var zone = stateManager.GetZoneForLocation(newLocationName);
             if (zone == null) return;
             if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId)) return;
 
-            Monitor.Log($"Blocked {Game1.player.Name} from entering {locationName} (zone: {zone.ZoneId} is locked).", LogLevel.Info);
+            Monitor.Log($"Blocked {Game1.player.Name} from entering {newLocationName} (zone: {zone.ZoneId} is locked).", LogLevel.Info);
 
             if (config.ShowBlockedMessage)
                 Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} is locked! Visit the zone plate to unlock it.", HUDMessage.error_type));
 
+            // Use e.OldLocation.Name directly (always reliable) instead of tick-tracked location
             isWarpingBack = true;
-            try
-            {
-                // Verify last safe location is actually accessible (not itself in a locked zone)
-                // e.g. if you die in the mines and get sent to Hospital (locked Town), the mines are also locked
-                var lastZone = stateManager.GetZoneForLocation(lastSafeLocation);
-                bool lastLocationSafe = IsFarmLocation(lastSafeLocation)
-                    || lastZone == null
-                    || stateManager.IsZoneAccessible(lastZone.ZoneId, farmerId);
+            warpBackFramesLeft = 3; // keep flag up long enough for the return warp to complete
 
-                if (lastLocationSafe)
-                    Game1.warpFarmer(lastSafeLocation, lastSafeX, lastSafeY, false);
-                else
-                    Game1.warpFarmer("Farm", 64, 15, false);
-            }
-            finally
-            {
-                Helper.Events.GameLoop.UpdateTicked += ResetWarpFlag;
-            }
-        }
+            // Check if old location is safe to return to (e.g. died in mines → hospital blocked → mines also blocked)
+            var oldZone = stateManager.GetZoneForLocation(oldLocationName);
+            bool oldLocationSafe = IsFarmLocation(oldLocationName)
+                || oldZone == null
+                || stateManager.IsZoneAccessible(oldZone.ZoneId, farmerId);
 
-        private void ResetWarpFlag(object sender, UpdateTickedEventArgs e)
-        {
-            isWarpingBack = false;
-            Helper.Events.GameLoop.UpdateTicked -= ResetWarpFlag;
+            if (oldLocationSafe)
+                Game1.warpFarmer(oldLocationName, lastSafeX, lastSafeY, false);
+            else
+                Game1.warpFarmer("Farm", 64, 15, false);
         }
 
         private bool IsFarmLocation(string name) =>

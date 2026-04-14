@@ -9,13 +9,14 @@ namespace ZoneLockChallenge
     public class ZoneSaveData
     {
         public HashSet<string> UnlockedZones { get; set; } = new();
-        public Dictionary<string, int> ActiveTickets { get; set; } = new();
+        /// <summary>Per-player tickets: zoneId -> (farmerId -> purchaseDay).</summary>
+        public Dictionary<string, Dictionary<long, int>> ActiveTickets { get; set; } = new();
     }
 
     public class ZoneSyncMessage
     {
         public HashSet<string> UnlockedZones { get; set; } = new();
-        public Dictionary<string, int> ActiveTickets { get; set; } = new();
+        public Dictionary<string, Dictionary<long, int>> ActiveTickets { get; set; } = new();
     }
 
     public class ZonePurchaseRequest
@@ -72,19 +73,22 @@ namespace ZoneLockChallenge
                 helper.Data.WriteSaveData(SaveDataKey, State);
         }
 
-        public bool IsZoneAccessible(string zoneId)
+        public bool IsZoneAccessible(string zoneId, long farmerId)
         {
             if (State.UnlockedZones.Contains(zoneId))
                 return true;
-            if (State.ActiveTickets.TryGetValue(zoneId, out int ticketDay))
+            if (State.ActiveTickets.TryGetValue(zoneId, out var playerTickets)
+                && playerTickets.TryGetValue(farmerId, out int ticketDay))
                 return ticketDay == Game1.Date.TotalDays;
             return false;
         }
 
         public bool IsZonePermanentlyUnlocked(string zoneId) => State.UnlockedZones.Contains(zoneId);
 
-        public bool HasActiveTicket(string zoneId) =>
-            State.ActiveTickets.TryGetValue(zoneId, out int ticketDay) && ticketDay == Game1.Date.TotalDays;
+        public bool HasActiveTicket(string zoneId, long farmerId) =>
+            State.ActiveTickets.TryGetValue(zoneId, out var playerTickets)
+            && playerTickets.TryGetValue(farmerId, out int ticketDay)
+            && ticketDay == Game1.Date.TotalDays;
 
         public ZoneDefinition GetZoneForLocation(string locationName)
         {
@@ -103,8 +107,44 @@ namespace ZoneLockChallenge
 
         public bool ArePrerequisitesMet(ZoneDefinition zone)
         {
-            if (string.IsNullOrEmpty(zone.RequiresZone)) return true;
-            return State.UnlockedZones.Contains(zone.RequiresZone);
+            if (!string.IsNullOrEmpty(zone.RequiresZone) && !State.UnlockedZones.Contains(zone.RequiresZone))
+                return false;
+            if (!string.IsNullOrEmpty(zone.RequiredSkill) && zone.RequiredSkillLevel > 0)
+            {
+                int collectiveLevel = GetCollectiveSkillLevel(zone.RequiredSkill);
+                if (collectiveLevel < zone.RequiredSkillLevel)
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>Get the sum of a given skill level across all farmers (collective skill gate).</summary>
+        public int GetCollectiveSkillLevel(string skillName)
+        {
+            int total = 0;
+            foreach (var farmer in Game1.getAllFarmers())
+            {
+                total += skillName switch
+                {
+                    "Farming" => farmer.FarmingLevel,
+                    "Mining" => farmer.MiningLevel,
+                    "Fishing" => farmer.FishingLevel,
+                    "Foraging" => farmer.ForagingLevel,
+                    "Combat" => farmer.CombatLevel,
+                    _ => 0
+                };
+            }
+            return total;
+        }
+
+        /// <summary>Get the gold cost for a zone, scaled by number of already-unlocked zones.</summary>
+        public int GetScaledMoneyCost(ZoneDefinition zone)
+        {
+            if (config.CostScalingPercent <= 0)
+                return zone.MoneyCost;
+            int unlockedCount = State.UnlockedZones.Count;
+            double multiplier = 1.0 + (config.CostScalingPercent / 100.0) * unlockedCount;
+            return (int)(zone.MoneyCost * multiplier);
         }
 
         public bool TryPurchase(string zoneId, Farmer buyer)
@@ -123,13 +163,15 @@ namespace ZoneLockChallenge
             if (zone == null) return false;
             if (!ArePrerequisitesMet(zone)) return false;
             if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId)) return false;
-            if (buyer.Money < zone.MoneyCost) return false;
+
+            int scaledCost = GetScaledMoneyCost(zone);
+            if (buyer.Money < scaledCost) return false;
 
             foreach (var itemCost in zone.Items)
                 if (CountItemInInventory(buyer, itemCost.ItemId) < itemCost.Count)
                     return false;
 
-            buyer.Money -= zone.MoneyCost;
+            buyer.Money -= scaledCost;
             foreach (var itemCost in zone.Items)
                 RemoveItemsFromInventory(buyer, itemCost.ItemId, itemCost.Count);
 
@@ -140,8 +182,10 @@ namespace ZoneLockChallenge
             }
             else if (zone.UnlockType == "ticket")
             {
-                State.ActiveTickets[zoneId] = Game1.Date.TotalDays;
-                monitor.Log($"Ticket for '{zoneId}' purchased by {buyer.Name} for day {Game1.Date.TotalDays}.", LogLevel.Info);
+                if (!State.ActiveTickets.ContainsKey(zoneId))
+                    State.ActiveTickets[zoneId] = new Dictionary<long, int>();
+                State.ActiveTickets[zoneId][buyer.UniqueMultiplayerID] = Game1.Date.TotalDays;
+                monitor.Log($"Ticket for '{zoneId}' purchased by {buyer.Name} (ID {buyer.UniqueMultiplayerID}) for day {Game1.Date.TotalDays}.", LogLevel.Info);
             }
 
             BroadcastState();
@@ -178,10 +222,13 @@ namespace ZoneLockChallenge
         public void BroadcastState()
         {
             if (!Context.IsMainPlayer) return;
+            var ticketsCopy = new Dictionary<string, Dictionary<long, int>>();
+            foreach (var kv in State.ActiveTickets)
+                ticketsCopy[kv.Key] = new Dictionary<long, int>(kv.Value);
             var message = new ZoneSyncMessage
             {
                 UnlockedZones = new HashSet<string>(State.UnlockedZones),
-                ActiveTickets = new Dictionary<string, int>(State.ActiveTickets)
+                ActiveTickets = ticketsCopy
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -232,25 +279,39 @@ namespace ZoneLockChallenge
                 BroadcastState();
         }
 
-        /// <summary>Expire old tickets. Returns list of zone IDs whose tickets just expired (for HUD messages).</summary>
+        /// <summary>Expire old tickets. Returns list of zone IDs where the local player's ticket expired (for HUD messages).</summary>
         public List<string> CleanupExpiredTickets()
         {
             if (!Context.IsMainPlayer)
                 return new List<string>();
 
             int today = Game1.Date.TotalDays;
-            var expired = State.ActiveTickets
-                .Where(kv => kv.Value < today)
-                .Select(kv => kv.Key)
-                .ToList();
+            long localId = Game1.player.UniqueMultiplayerID;
+            var expiredForLocal = new List<string>();
+            bool anyRemoved = false;
 
-            foreach (var key in expired)
-                State.ActiveTickets.Remove(key);
+            foreach (var zoneId in State.ActiveTickets.Keys.ToList())
+            {
+                var playerTickets = State.ActiveTickets[zoneId];
+                var expiredPlayers = playerTickets.Where(kv => kv.Value < today).Select(kv => kv.Key).ToList();
 
-            if (expired.Count > 0)
+                foreach (var farmerId in expiredPlayers)
+                {
+                    if (farmerId == localId)
+                        expiredForLocal.Add(zoneId);
+                    playerTickets.Remove(farmerId);
+                    anyRemoved = true;
+                }
+
+                // Remove zone entry entirely if no players have tickets left
+                if (playerTickets.Count == 0)
+                    State.ActiveTickets.Remove(zoneId);
+            }
+
+            if (anyRemoved)
                 BroadcastState();
 
-            return expired;
+            return expiredForLocal;
         }
     }
 }

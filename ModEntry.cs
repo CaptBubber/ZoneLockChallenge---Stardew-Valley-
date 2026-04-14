@@ -15,8 +15,16 @@ namespace ZoneLockChallenge
         private ZoneStateManager stateManager;
         private bool isWarpingBack;
 
+        // Track player's last safe position for warp-back
+        private string lastSafeLocation = "Farm";
+        private int lastSafeX = 64;
+        private int lastSafeY = 15;
+
         // Plate rendering: animated bounce
         private float plateAnimTimer;
+
+        // Plate repositioning mode
+        private string platePlacementZoneId;
 
         public override void Entry(IModHelper helper)
         {
@@ -35,6 +43,10 @@ namespace ZoneLockChallenge
             helper.Events.Multiplayer.PeerConnected += OnPeerConnected;
             helper.Events.Display.RenderedWorld += OnRenderedWorld;
             helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
+
+            helper.ConsoleCommands.Add("zlc_moveplate",
+                "Move a zone plate to your current cursor tile. Usage: zlc_moveplate <ZoneId>\nUse 'zlc_moveplate list' to see all zone IDs.",
+                OnMovePlateCommand);
 
             Monitor.Log("Zone Lock Challenge loaded. Press " + config.OpenMenuKey + " to view zones. Visit zone plates to purchase.", LogLevel.Info);
         }
@@ -77,7 +89,17 @@ namespace ZoneLockChallenge
         private void OnUpdateTicked(object sender, UpdateTickedEventArgs e)
         {
             if (Context.IsWorldReady)
+            {
                 plateAnimTimer += (float)(1.0 / 60.0); // ~60 ticks per second
+
+                // Track last safe position for warp-back (only when not mid-warp)
+                if (!isWarpingBack && Game1.player?.currentLocation != null)
+                {
+                    lastSafeLocation = Game1.currentLocation.Name;
+                    lastSafeX = (int)Game1.player.Tile.X;
+                    lastSafeY = (int)Game1.player.Tile.Y;
+                }
+            }
         }
 
         // ── Warp interception ────────────────────────────────────────
@@ -91,9 +113,10 @@ namespace ZoneLockChallenge
 
             if (IsFarmLocation(locationName)) return;
 
+            long farmerId = Game1.player.UniqueMultiplayerID;
             var zone = stateManager.GetZoneForLocation(locationName);
             if (zone == null) return;
-            if (stateManager.IsZoneAccessible(zone.ZoneId)) return;
+            if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId)) return;
 
             Monitor.Log($"Blocked {Game1.player.Name} from entering {locationName} (zone: {zone.ZoneId} is locked).", LogLevel.Info);
 
@@ -103,8 +126,15 @@ namespace ZoneLockChallenge
             isWarpingBack = true;
             try
             {
-                if (IsFarmLocation(oldLocationName))
-                    Game1.warpFarmer(oldLocationName, GetSafeReturnX(oldLocationName), GetSafeReturnY(oldLocationName), false);
+                // Verify last safe location is actually accessible (not itself in a locked zone)
+                // e.g. if you die in the mines and get sent to Hospital (locked Town), the mines are also locked
+                var lastZone = stateManager.GetZoneForLocation(lastSafeLocation);
+                bool lastLocationSafe = IsFarmLocation(lastSafeLocation)
+                    || lastZone == null
+                    || stateManager.IsZoneAccessible(lastZone.ZoneId, farmerId);
+
+                if (lastLocationSafe)
+                    Game1.warpFarmer(lastSafeLocation, lastSafeX, lastSafeY, false);
                 else
                     Game1.warpFarmer("Farm", 64, 15, false);
             }
@@ -126,9 +156,6 @@ namespace ZoneLockChallenge
                 name == "Cellar" || name == "Greenhouse" ||
                 name.StartsWith("Cellar") || name.StartsWith("Cabin"));
 
-        private int GetSafeReturnX(string loc) => loc switch { "FarmHouse" => 9, "FarmCave" => 4, "Greenhouse" => 10, _ => 64 };
-        private int GetSafeReturnY(string loc) => loc switch { "FarmHouse" => 9, "FarmCave" => 10, "Greenhouse" => 23, _ => 15 };
-
         // ── Input: K for read-only, action button for plates + minecart signs ─
 
         private void OnButtonPressed(object sender, ButtonPressedEventArgs e)
@@ -142,6 +169,26 @@ namespace ZoneLockChallenge
                 int tileX = (int)grabTile.X;
                 int tileY = (int)grabTile.Y;
                 string locName = Game1.currentLocation.Name;
+
+                // Plate placement mode: place the plate at the clicked tile
+                if (platePlacementZoneId != null)
+                {
+                    var zone = config.Zones.FirstOrDefault(z => z.ZoneId == platePlacementZoneId);
+                    if (zone != null)
+                    {
+                        zone.Plate ??= new PlateTile();
+                        zone.Plate.LocationName = locName;
+                        zone.Plate.X = tileX;
+                        zone.Plate.Y = tileY;
+                        Helper.WriteConfig(config);
+                        Game1.addHUDMessage(new HUDMessage($"Plate for '{zone.DisplayName}' moved to {locName} ({tileX}, {tileY}). Saved to config.", HUDMessage.newQuest_type));
+                        Game1.playSound("questcomplete");
+                        Monitor.Log($"Plate for '{zone.ZoneId}' set to {locName} ({tileX}, {tileY}).", LogLevel.Info);
+                    }
+                    platePlacementZoneId = null;
+                    Helper.Input.Suppress(e.Button);
+                    return;
+                }
 
                 // Check zone plates
                 foreach (var zone in config.Zones)
@@ -196,6 +243,41 @@ namespace ZoneLockChallenge
                 Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: false);
                 Game1.playSound("bigSelect");
             }
+        }
+
+        // ── Console commands ─────────────────────────────────────────
+
+        private void OnMovePlateCommand(string command, string[] args)
+        {
+            if (!Context.IsWorldReady)
+            {
+                Monitor.Log("You must be in-game to use this command.", LogLevel.Warn);
+                return;
+            }
+
+            if (args.Length == 0 || args[0].Equals("list", StringComparison.OrdinalIgnoreCase))
+            {
+                Monitor.Log("Available zones:", LogLevel.Info);
+                foreach (var zone in config.Zones)
+                {
+                    string plateLoc = zone.Plate != null ? $"{zone.Plate.LocationName} ({zone.Plate.X}, {zone.Plate.Y})" : "none";
+                    Monitor.Log($"  {zone.ZoneId} — {zone.DisplayName} — plate at: {plateLoc}", LogLevel.Info);
+                }
+                Monitor.Log("Usage: zlc_moveplate <ZoneId> — then click a tile in-game to place the plate.", LogLevel.Info);
+                return;
+            }
+
+            string zoneId = args[0];
+            var targetZone = config.Zones.FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
+            if (targetZone == null)
+            {
+                Monitor.Log($"Unknown zone '{zoneId}'. Use 'zlc_moveplate list' to see valid zone IDs.", LogLevel.Warn);
+                return;
+            }
+
+            platePlacementZoneId = targetZone.ZoneId;
+            Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{targetZone.DisplayName}' plate.", HUDMessage.newQuest_type));
+            Monitor.Log($"Plate placement mode active for '{targetZone.ZoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);
         }
 
         // ── Plate + sign rendering ───────────────────────────────────

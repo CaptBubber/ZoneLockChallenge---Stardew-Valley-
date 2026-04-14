@@ -113,9 +113,10 @@ namespace ZoneLockChallenge
 
             if (IsFarmLocation(locationName)) return;
 
+            long farmerId = Game1.player.UniqueMultiplayerID;
             var zone = stateManager.GetZoneForLocation(locationName);
             if (zone == null) return;
-            if (stateManager.IsZoneAccessible(zone.ZoneId)) return;
+            if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId)) return;
 
             Monitor.Log($"Blocked {Game1.player.Name} from entering {locationName} (zone: {zone.ZoneId} is locked).", LogLevel.Info);
 
@@ -125,8 +126,17 @@ namespace ZoneLockChallenge
             isWarpingBack = true;
             try
             {
-                // Warp back to last safe position (where the player was before entering)
-                Game1.warpFarmer(lastSafeLocation, lastSafeX, lastSafeY, false);
+                // Verify last safe location is actually accessible (not itself in a locked zone)
+                // e.g. if you die in the mines and get sent to Hospital (locked Town), the mines are also locked
+                var lastZone = stateManager.GetZoneForLocation(lastSafeLocation);
+                bool lastLocationSafe = IsFarmLocation(lastSafeLocation)
+                    || lastZone == null
+                    || stateManager.IsZoneAccessible(lastZone.ZoneId, farmerId);
+
+                if (lastLocationSafe)
+                    Game1.warpFarmer(lastSafeLocation, lastSafeX, lastSafeY, false);
+                else
+                    Game1.warpFarmer("Farm", 64, 15, false);
             }
             finally
             {

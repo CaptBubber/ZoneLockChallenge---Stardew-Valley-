@@ -157,7 +157,7 @@ namespace ZoneLockChallenge
 
             if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
             { ShowStatus("Already unlocked!", true); return; }
-            if (zone.UnlockType == "ticket" && stateManager.HasActiveTicket(zone.ZoneId))
+            if (zone.UnlockType == "ticket" && stateManager.HasActiveTicket(zone.ZoneId, farmer.UniqueMultiplayerID))
             { ShowStatus("You already have a ticket for today!", true); return; }
             if (!stateManager.ArePrerequisitesMet(zone))
             {
@@ -260,7 +260,7 @@ namespace ZoneLockChallenge
                 var slot = zoneSlots[i];
                 bool isSelected = dataIndex == selectedIndex;
                 bool isPermanent = stateManager.IsZonePermanentlyUnlocked(zone.ZoneId);
-                bool hasTicket = stateManager.HasActiveTicket(zone.ZoneId);
+                bool hasTicket = stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID);
                 bool isAccessible = isPermanent || hasTicket;
 
                 if (isSelected)
@@ -379,7 +379,7 @@ namespace ZoneLockChallenge
             string status; Color statusColor;
             if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
             { status = "UNLOCKED"; statusColor = Color.LimeGreen; }
-            else if (stateManager.HasActiveTicket(zone.ZoneId))
+            else if (stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID))
             { status = "TICKET ACTIVE TODAY"; statusColor = Color.LimeGreen; }
             else
             { status = "LOCKED"; statusColor = Color.Red; }
@@ -397,7 +397,7 @@ namespace ZoneLockChallenge
 
                 string btnText;
                 if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId)) btnText = "Already Unlocked";
-                else if (zone.UnlockType == "ticket" && stateManager.HasActiveTicket(zone.ZoneId)) btnText = "Ticket Active";
+                else if (zone.UnlockType == "ticket" && stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID)) btnText = "Ticket Active";
                 else if (zone.UnlockType == "ticket") btnText = "Buy Ticket";
                 else btnText = "Unlock Zone";
 
@@ -423,7 +423,7 @@ namespace ZoneLockChallenge
         {
             if (!purchaseEnabled || waitingForResponse) return false;
             if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId)) return false;
-            if (zone.UnlockType == "ticket" && stateManager.HasActiveTicket(zone.ZoneId)) return false;
+            if (zone.UnlockType == "ticket" && stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID)) return false;
             if (!stateManager.ArePrerequisitesMet(zone)) return false;
             return true;
         }

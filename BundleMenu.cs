@@ -337,11 +337,11 @@ namespace ZoneLockChallenge
                     Color itemColor = hasEnough ? Color.DarkGreen : Color.DarkRed;
                     int textX = x + 8;
 
-                    // Draw item icon (offset to align center of 32x32 draw area with text baseline)
+                    // Draw item icon aligned with text row
                     if (itemCache.TryGetValue(item.ItemId, out var cachedItem))
                     {
-                        cachedItem.drawInMenu(b, new Vector2(x - 8, y - 14), 0.5f, 1f, 0.9f, StackDrawType.Hide);
-                        textX = x + 28;
+                        cachedItem.drawInMenu(b, new Vector2(x - 20, y - 24), 0.5f, 1f, 0.9f, StackDrawType.Hide);
+                        textX = x + 24;
                     }
 
                     string check = hasEnough ? "\u2713 " : "";

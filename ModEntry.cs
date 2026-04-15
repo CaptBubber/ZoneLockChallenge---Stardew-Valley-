@@ -16,7 +16,8 @@ namespace ZoneLockChallenge
         private bool isWarpingBack;
         private int warpBackFramesLeft;
 
-        // Track player's last tile position (updated before game processes warps)
+        // Track player's last tile position and location (updated before game processes warps)
+        private string lastSafeLocationName = "Farm";
         private int lastSafeX = 64;
         private int lastSafeY = 15;
 
@@ -92,6 +93,7 @@ namespace ZoneLockChallenge
         {
             if (Context.IsWorldReady && !isWarpingBack && Game1.player != null)
             {
+                lastSafeLocationName = Game1.currentLocation?.Name ?? "Farm";
                 lastSafeX = (int)Game1.player.Tile.X;
                 lastSafeY = (int)Game1.player.Tile.Y;
             }
@@ -134,7 +136,6 @@ namespace ZoneLockChallenge
             if (config.ShowBlockedMessage)
                 Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} is locked! Visit the zone plate to unlock it.", HUDMessage.error_type));
 
-            // Use e.OldLocation.Name directly (always reliable) instead of tick-tracked location
             isWarpingBack = true;
             warpBackFramesLeft = 3; // keep flag up long enough for the return warp to complete
 
@@ -145,7 +146,35 @@ namespace ZoneLockChallenge
                 || stateManager.IsZoneAccessible(oldZone.ZoneId, farmerId);
 
             if (oldLocationSafe)
-                Game1.warpFarmer(oldLocationName, lastSafeX, lastSafeY, false);
+            {
+                int warpX = lastSafeX;
+                int warpY = lastSafeY;
+
+                // If our tracked position is from a different location (can happen during warp transitions),
+                // find the warp point in the old location that leads to the blocked zone
+                if (lastSafeLocationName != oldLocationName)
+                {
+                    bool foundWarp = false;
+                    foreach (var warp in e.OldLocation.warps)
+                    {
+                        if (warp.TargetName == newLocationName)
+                        {
+                            warpX = warp.X;
+                            warpY = warp.Y;
+                            foundWarp = true;
+                            break;
+                        }
+                    }
+                    if (!foundWarp)
+                    {
+                        // Fallback: use center of old map
+                        warpX = e.OldLocation.Map.Layers[0].LayerWidth / 2;
+                        warpY = e.OldLocation.Map.Layers[0].LayerHeight / 2;
+                    }
+                }
+
+                Game1.warpFarmer(oldLocationName, warpX, warpY, false);
+            }
             else
                 Game1.warpFarmer("Farm", 64, 15, false);
         }

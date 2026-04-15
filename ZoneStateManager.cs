@@ -11,12 +11,15 @@ namespace ZoneLockChallenge
         public HashSet<string> UnlockedZones { get; set; } = new();
         /// <summary>Per-player tickets: zoneId -> (farmerId -> purchaseDay).</summary>
         public Dictionary<string, Dictionary<long, int>> ActiveTickets { get; set; } = new();
+        /// <summary>Host-managed plate position overrides (synced to all players).</summary>
+        public Dictionary<string, PlateTile> PlateOverrides { get; set; } = new();
     }
 
     public class ZoneSyncMessage
     {
         public HashSet<string> UnlockedZones { get; set; } = new();
         public Dictionary<string, Dictionary<long, int>> ActiveTickets { get; set; } = new();
+        public Dictionary<string, PlateTile> PlateOverrides { get; set; } = new();
     }
 
     public class ZonePurchaseRequest
@@ -84,6 +87,25 @@ namespace ZoneLockChallenge
         }
 
         public bool IsZonePermanentlyUnlocked(string zoneId) => State.UnlockedZones.Contains(zoneId);
+
+        /// <summary>Get the effective plate position for a zone (override from save data, or config default).</summary>
+        public PlateTile GetEffectivePlate(ZoneDefinition zone)
+        {
+            if (State.PlateOverrides.TryGetValue(zone.ZoneId, out var overridePlate))
+                return overridePlate;
+            return zone.Plate;
+        }
+
+        /// <summary>Set a plate override (host only). Saves state and broadcasts to all players.</summary>
+        public void SetPlateOverride(string zoneId, PlateTile plate)
+        {
+            State.PlateOverrides[zoneId] = plate;
+            if (Context.IsMainPlayer)
+            {
+                SaveState();
+                BroadcastState();
+            }
+        }
 
         public bool HasActiveTicket(string zoneId, long farmerId) =>
             State.ActiveTickets.TryGetValue(zoneId, out var playerTickets)
@@ -232,10 +254,14 @@ namespace ZoneLockChallenge
             var ticketsCopy = new Dictionary<string, Dictionary<long, int>>();
             foreach (var kv in State.ActiveTickets)
                 ticketsCopy[kv.Key] = new Dictionary<long, int>(kv.Value);
+            var plateOverridesCopy = new Dictionary<string, PlateTile>();
+            foreach (var kv in State.PlateOverrides)
+                plateOverridesCopy[kv.Key] = new PlateTile { LocationName = kv.Value.LocationName, X = kv.Value.X, Y = kv.Value.Y };
             var message = new ZoneSyncMessage
             {
                 UnlockedZones = new HashSet<string>(State.UnlockedZones),
-                ActiveTickets = ticketsCopy
+                ActiveTickets = ticketsCopy,
+                PlateOverrides = plateOverridesCopy
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -273,6 +299,7 @@ namespace ZoneLockChallenge
                 var sync = e.ReadAs<ZoneSyncMessage>();
                 State.UnlockedZones = sync.UnlockedZones;
                 State.ActiveTickets = sync.ActiveTickets;
+                State.PlateOverrides = sync.PlateOverrides ?? new Dictionary<string, PlateTile>();
                 OnStateChanged?.Invoke();
             }
 

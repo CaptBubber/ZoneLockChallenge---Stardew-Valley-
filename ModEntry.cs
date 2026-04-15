@@ -126,6 +126,10 @@ namespace ZoneLockChallenge
 
             if (IsFarmLocation(newLocationName)) return;
 
+            // On festival days, allow all warps so players can attend festivals
+            if (Utility.isFestivalDay())
+                return;
+
             long farmerId = Game1.player.UniqueMultiplayerID;
             var zone = stateManager.GetZoneForLocation(newLocationName);
             if (zone == null) return;
@@ -205,26 +209,24 @@ namespace ZoneLockChallenge
                     var zone = config.Zones.FirstOrDefault(z => z.ZoneId == platePlacementZoneId);
                     if (zone != null)
                     {
-                        zone.Plate ??= new PlateTile();
-                        zone.Plate.LocationName = locName;
-                        zone.Plate.X = tileX;
-                        zone.Plate.Y = tileY;
-                        Helper.WriteConfig(config);
-                        Game1.addHUDMessage(new HUDMessage($"Plate for '{zone.DisplayName}' moved to {locName} ({tileX}, {tileY}). Saved to config.", HUDMessage.newQuest_type));
+                        var newPlate = new PlateTile { LocationName = locName, X = tileX, Y = tileY };
+                        stateManager.SetPlateOverride(zone.ZoneId, newPlate);
+                        Game1.addHUDMessage(new HUDMessage($"Plate for '{zone.DisplayName}' moved to {locName} ({tileX}, {tileY}).", HUDMessage.newQuest_type));
                         Game1.playSound("questcomplete");
-                        Monitor.Log($"Plate for '{zone.ZoneId}' set to {locName} ({tileX}, {tileY}).", LogLevel.Info);
+                        Monitor.Log($"Plate for '{zone.ZoneId}' set to {locName} ({tileX}, {tileY}). Saved to state and synced.", LogLevel.Info);
                     }
                     platePlacementZoneId = null;
                     Helper.Input.Suppress(e.Button);
                     return;
                 }
 
-                // Check zone plates
+                // Check zone plates (use effective plate positions from save data or config)
                 foreach (var zone in config.Zones)
                 {
-                    if (zone.Plate == null) continue;
-                    if (locName != zone.Plate.LocationName) continue;
-                    if (tileX != zone.Plate.X || tileY != zone.Plate.Y) continue;
+                    var plate = stateManager.GetEffectivePlate(zone);
+                    if (plate == null) continue;
+                    if (locName != plate.LocationName) continue;
+                    if (tileX != plate.X || tileY != plate.Y) continue;
 
                     // Plate found!
                     if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
@@ -234,7 +236,8 @@ namespace ZoneLockChallenge
                     }
 
                     // Open purchase menu focused on this zone
-                    Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: true, focusZoneId: zone.ZoneId);
+                    Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: true, focusZoneId: zone.ZoneId,
+                        onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null);
                     Game1.playSound("bigSelect");
                     Helper.Input.Suppress(e.Button);
                     return;
@@ -269,7 +272,8 @@ namespace ZoneLockChallenge
             if (Enum.TryParse<SButton>(config.OpenMenuKey, ignoreCase: true, out SButton configuredKey)
                 && e.Button == configuredKey)
             {
-                Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: false);
+                Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: false,
+                    onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null);
                 Game1.playSound("bigSelect");
             }
         }
@@ -289,7 +293,8 @@ namespace ZoneLockChallenge
                 Monitor.Log("Available zones:", LogLevel.Info);
                 foreach (var zone in config.Zones)
                 {
-                    string plateLoc = zone.Plate != null ? $"{zone.Plate.LocationName} ({zone.Plate.X}, {zone.Plate.Y})" : "none";
+                    var plate = stateManager.GetEffectivePlate(zone);
+                    string plateLoc = plate != null ? $"{plate.LocationName} ({plate.X}, {plate.Y})" : "none";
                     Monitor.Log($"  {zone.ZoneId} — {zone.DisplayName} — plate at: {plateLoc}", LogLevel.Info);
                 }
                 Monitor.Log("Usage: zlc_moveplate <ZoneId> — then click a tile in-game to place the plate.", LogLevel.Info);
@@ -309,6 +314,16 @@ namespace ZoneLockChallenge
             Monitor.Log($"Plate placement mode active for '{targetZone.ZoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);
         }
 
+        /// <summary>Called by BundleMenu to enter plate placement mode for a zone.</summary>
+        private void RequestPlatePlacement(string zoneId)
+        {
+            platePlacementZoneId = zoneId;
+            var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+            string name = zone?.DisplayName ?? zoneId;
+            Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{name}' plate.", HUDMessage.newQuest_type));
+            Monitor.Log($"Plate placement mode active for '{zoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);
+        }
+
         // ── Plate + sign rendering ───────────────────────────────────
 
         private void OnRenderedWorld(object sender, RenderedWorldEventArgs e)
@@ -318,17 +333,18 @@ namespace ZoneLockChallenge
             string locName = Game1.currentLocation.Name;
             SpriteBatch b = e.SpriteBatch;
 
-            // Draw zone plates in the current location
+            // Draw zone plates in the current location (use effective plate positions)
             foreach (var zone in config.Zones)
             {
-                if (zone.Plate == null) continue;
-                if (zone.Plate.LocationName != locName) continue;
+                var plate = stateManager.GetEffectivePlate(zone);
+                if (plate == null) continue;
+                if (plate.LocationName != locName) continue;
 
                 // Don't draw plate if permanently unlocked (plate "disappeared")
                 if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
                     continue;
 
-                DrawPlateSprite(b, zone);
+                DrawPlateSprite(b, zone, plate);
             }
 
             // Draw minecart signs if beach is unlocked
@@ -344,10 +360,10 @@ namespace ZoneLockChallenge
             }
         }
 
-        private void DrawPlateSprite(SpriteBatch b, ZoneDefinition zone)
+        private void DrawPlateSprite(SpriteBatch b, ZoneDefinition zone, PlateTile plate)
         {
             // World position of the tile
-            Vector2 worldPos = new(zone.Plate.X * 64, zone.Plate.Y * 64);
+            Vector2 worldPos = new(plate.X * 64, plate.Y * 64);
 
             // Convert to screen position
             Vector2 screenPos = Game1.GlobalToLocal(Game1.viewport, worldPos);

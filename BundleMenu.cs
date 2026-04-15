@@ -22,6 +22,7 @@ namespace ZoneLockChallenge
         private readonly ModConfig config;
         private readonly ZoneStateManager stateManager;
         private readonly bool purchaseEnabled;
+        private readonly Action<string> onRequestPlatePlacement;
 
         private int selectedIndex;
         private int scrollOffset;
@@ -43,7 +44,7 @@ namespace ZoneLockChallenge
 
         /// <param name="purchaseEnabled">False = read-only view (K key), True = can purchase (plate interaction).</param>
         /// <param name="focusZoneId">If set, auto-select this zone on open.</param>
-        public BundleMenu(ModConfig config, ZoneStateManager stateManager, bool purchaseEnabled = true, string focusZoneId = null)
+        public BundleMenu(ModConfig config, ZoneStateManager stateManager, bool purchaseEnabled = true, string focusZoneId = null, Action<string> onRequestPlatePlacement = null)
             : base(
                   (Game1.uiViewport.Width - MenuWidth) / 2,
                   (Game1.uiViewport.Height - MenuHeight) / 2,
@@ -52,6 +53,7 @@ namespace ZoneLockChallenge
             this.config = config;
             this.stateManager = stateManager;
             this.purchaseEnabled = purchaseEnabled;
+            this.onRequestPlatePlacement = onRequestPlatePlacement;
 
             stateManager.OnPurchaseResponse = OnPurchaseResponse;
 
@@ -127,6 +129,26 @@ namespace ZoneLockChallenge
 
             if (purchaseEnabled && purchaseButton.containsPoint(x, y) && !waitingForResponse)
                 TryPurchaseSelected();
+
+            // "Move Plate" click area (host only, below purchase button)
+            if (onRequestPlatePlacement != null && selectedIndex >= 0 && selectedIndex < config.Zones.Count)
+            {
+                string moveText = "Move Plate";
+                Vector2 moveSize = Game1.smallFont.MeasureString(moveText);
+                int moveX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - (int)moveSize.X) / 2;
+                // Must match the draw position: info line at +12, then move link below that
+                int infoY = purchaseButton.bounds.Bottom + 12;
+                int linkY = infoY + 28 + 4; // 28px for info text line height
+                Rectangle moveArea = new(moveX, linkY, (int)moveSize.X, (int)moveSize.Y);
+                if (moveArea.Contains(x, y))
+                {
+                    var zone = config.Zones[selectedIndex];
+                    onRequestPlatePlacement.Invoke(zone.ZoneId);
+                    Game1.playSound("smallSelect");
+                    exitThisMenu();
+                    return;
+                }
+            }
         }
 
         public override void receiveScrollWheelAction(int direction)
@@ -416,6 +438,29 @@ namespace ZoneLockChallenge
                     new Vector2(purchaseButton.bounds.X + (purchaseButton.bounds.Width - hintSize.X) / 2,
                                 purchaseButton.bounds.Y + (purchaseButton.bounds.Height - hintSize.Y) / 2),
                     Color.Gray);
+            }
+
+            // "Move Plate" link (host only)
+            if (onRequestPlatePlacement != null)
+            {
+                var plate = stateManager.GetEffectivePlate(zone);
+                string plateInfo = plate != null ? $"{plate.LocationName} ({plate.X}, {plate.Y})" : "not set";
+                string moveText = "Move Plate";
+                Vector2 moveSize = Game1.smallFont.MeasureString(moveText);
+                int moveX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - (int)moveSize.X) / 2;
+                int infoY = purchaseButton.bounds.Bottom + 12;
+
+                // Plate location info
+                string infoText = $"Plate: {plateInfo}";
+                Vector2 infoSize = Game1.smallFont.MeasureString(infoText);
+                b.DrawString(Game1.smallFont, infoText,
+                    new Vector2(purchaseButton.bounds.X + (purchaseButton.bounds.Width - infoSize.X) / 2, infoY),
+                    Color.Gray);
+
+                // Clickable "Move Plate" text below (must match click area: infoY + 28 + 4)
+                int linkY = infoY + 28 + 4;
+                b.DrawString(Game1.smallFont, moveText, new Vector2(moveX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                b.DrawString(Game1.smallFont, moveText, new Vector2(moveX, linkY), Color.SaddleBrown, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
             }
         }
 

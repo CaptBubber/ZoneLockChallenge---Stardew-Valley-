@@ -171,9 +171,16 @@ namespace ZoneLockChallenge
                 if (CountItemInInventory(buyer, itemCost.ItemId) < itemCost.Count)
                     return false;
 
-            buyer.Money -= scaledCost;
-            foreach (var itemCost in zone.Items)
-                RemoveItemsFromInventory(buyer, itemCost.ItemId, itemCost.Count);
+            // Only deduct money/items if buyer is the local player.
+            // For remote farmhands, the host cannot modify their Money directly;
+            // the farmhand will handle deduction locally when receiving the success response.
+            bool isLocalBuyer = (buyer.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID);
+            if (isLocalBuyer)
+            {
+                buyer.Money -= scaledCost;
+                foreach (var itemCost in zone.Items)
+                    RemoveItemsFromInventory(buyer, itemCost.ItemId, itemCost.Count);
+            }
 
             if (zone.UnlockType == "permanent")
             {
@@ -272,6 +279,20 @@ namespace ZoneLockChallenge
             if (e.Type == PurchaseResponseType && !Context.IsMainPlayer)
             {
                 var response = e.ReadAs<ZonePurchaseResponse>();
+
+                // Deduct money and items locally on the farmhand's side
+                if (response.Success)
+                {
+                    var zone = config.Zones.FirstOrDefault(z => z.ZoneId == response.ZoneId);
+                    if (zone != null)
+                    {
+                        int scaledCost = GetScaledMoneyCost(zone);
+                        Game1.player.Money -= scaledCost;
+                        foreach (var itemCost in zone.Items)
+                            RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
+                    }
+                }
+
                 OnPurchaseResponse?.Invoke(response);
             }
 

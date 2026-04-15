@@ -23,6 +23,7 @@ namespace ZoneLockChallenge
         private readonly ZoneStateManager stateManager;
         private readonly bool purchaseEnabled;
         private readonly Action<string> onRequestPlatePlacement;
+        private readonly Action<string> onRequestZoneEdit;
 
         private int selectedIndex;
         private int scrollOffset;
@@ -44,7 +45,7 @@ namespace ZoneLockChallenge
 
         /// <param name="purchaseEnabled">False = read-only view (K key), True = can purchase (plate interaction).</param>
         /// <param name="focusZoneId">If set, auto-select this zone on open.</param>
-        public BundleMenu(ModConfig config, ZoneStateManager stateManager, bool purchaseEnabled = true, string focusZoneId = null, Action<string> onRequestPlatePlacement = null)
+        public BundleMenu(ModConfig config, ZoneStateManager stateManager, bool purchaseEnabled = true, string focusZoneId = null, Action<string> onRequestPlatePlacement = null, Action<string> onRequestZoneEdit = null)
             : base(
                   (Game1.uiViewport.Width - MenuWidth) / 2,
                   (Game1.uiViewport.Height - MenuHeight) / 2,
@@ -54,13 +55,19 @@ namespace ZoneLockChallenge
             this.stateManager = stateManager;
             this.purchaseEnabled = purchaseEnabled;
             this.onRequestPlatePlacement = onRequestPlatePlacement;
+            this.onRequestZoneEdit = onRequestZoneEdit;
 
             stateManager.OnPurchaseResponse = OnPurchaseResponse;
 
             foreach (var zone in config.Zones)
+            {
                 foreach (var itemCost in zone.Items)
-                    if (!itemCache.ContainsKey(itemCost.ItemId))
-                        try { var item = ItemRegistry.Create(itemCost.ItemId); if (item != null) itemCache[itemCost.ItemId] = item; } catch { }
+                    CacheItem(itemCost.ItemId);
+                foreach (var itemCost in stateManager.GetEffectiveItems(zone))
+                    CacheItem(itemCost.ItemId);
+                foreach (var itemCost in stateManager.GetRewards(zone))
+                    CacheItem(itemCost.ItemId);
+            }
 
             SetupLayout();
 
@@ -130,20 +137,34 @@ namespace ZoneLockChallenge
             if (purchaseEnabled && purchaseButton.containsPoint(x, y) && !waitingForResponse)
                 TryPurchaseSelected();
 
-            // "Move Plate" click area (host only, below purchase button)
+            // "Move Plate" and "Edit Zone" click areas (host only, below purchase button)
             if (onRequestPlatePlacement != null && selectedIndex >= 0 && selectedIndex < config.Zones.Count)
             {
                 string moveText = "Move Plate";
+                string editText = "Edit Zone";
                 Vector2 moveSize = Game1.smallFont.MeasureString(moveText);
-                int moveX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - (int)moveSize.X) / 2;
-                // Must match the draw position: info line at +12, then move link below that
+                Vector2 editSize = Game1.smallFont.MeasureString(editText);
                 int infoY = purchaseButton.bounds.Bottom + 12;
-                int linkY = infoY + 28 + 4; // 28px for info text line height
-                Rectangle moveArea = new(moveX, linkY, (int)moveSize.X, (int)moveSize.Y);
+                int linkY = infoY + 28 + 4;
+                int totalLinksWidth = (int)moveSize.X + 24 + (int)editSize.X;
+                int linksStartX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - totalLinksWidth) / 2;
+
+                Rectangle moveArea = new(linksStartX, linkY, (int)moveSize.X, (int)moveSize.Y);
                 if (moveArea.Contains(x, y))
                 {
                     var zone = config.Zones[selectedIndex];
                     onRequestPlatePlacement.Invoke(zone.ZoneId);
+                    Game1.playSound("smallSelect");
+                    exitThisMenu();
+                    return;
+                }
+
+                int editX = linksStartX + (int)moveSize.X + 24;
+                Rectangle editArea = new(editX, linkY, (int)editSize.X, (int)editSize.Y);
+                if (editArea.Contains(x, y) && onRequestZoneEdit != null)
+                {
+                    var zone = config.Zones[selectedIndex];
+                    onRequestZoneEdit.Invoke(zone.ZoneId);
                     Game1.playSound("smallSelect");
                     exitThisMenu();
                     return;
@@ -203,7 +224,8 @@ namespace ZoneLockChallenge
             int scaledCost = stateManager.GetScaledMoneyCost(zone);
             if (farmer.Money < scaledCost) { ShowStatus("Not enough gold!", true); return; }
 
-            foreach (var item in zone.Items)
+            var effectiveItems = stateManager.GetEffectiveItems(zone);
+            foreach (var item in effectiveItems)
             {
                 int have = 0;
                 foreach (var inv in farmer.Items) if (inv != null && inv.QualifiedItemId == item.ItemId) have += inv.Stack;
@@ -334,22 +356,24 @@ namespace ZoneLockChallenge
             y += 32;
 
             // Gold cost with coin icon (scaled by number of unlocked zones)
+            int baseCost = stateManager.GetEffectiveBaseCost(zone);
             int scaledCost = stateManager.GetScaledMoneyCost(zone);
             bool canAffordGold = Game1.player.Money >= scaledCost;
             b.Draw(Game1.mouseCursors, new Vector2(x, y - 2), new Rectangle(193, 373, 9, 10), Color.White, 0f, Vector2.Zero, 3f, SpriteEffects.None, 1f);
-            string costText = scaledCost != zone.MoneyCost
-                ? $" {scaledCost:N0}g (base {zone.MoneyCost:N0}g)"
+            string costText = scaledCost != baseCost
+                ? $" {scaledCost:N0}g (base {baseCost:N0}g)"
                 : $" {scaledCost:N0}g";
             b.DrawString(Game1.smallFont, costText, new Vector2(x + 30, y), canAffordGold ? Color.DarkGreen : Color.DarkRed);
             y += 36;
 
-            // Item costs with icons
-            if (zone.Items.Count > 0)
+            // Item costs with icons (using effective items from overrides)
+            var effectiveItems = stateManager.GetEffectiveItems(zone);
+            if (effectiveItems.Count > 0)
             {
                 b.DrawString(Game1.smallFont, "Items required:", new Vector2(x, y), Color.Black);
                 y += 28;
 
-                foreach (var item in zone.Items)
+                foreach (var item in effectiveItems)
                 {
                     int have = 0;
                     foreach (var inv in Game1.player.Items)
@@ -375,6 +399,26 @@ namespace ZoneLockChallenge
             {
                 b.DrawString(Game1.smallFont, "No items required", new Vector2(x, y), Color.DarkGreen);
                 y += 32;
+            }
+
+            // Rewards
+            var rewards = stateManager.GetRewards(zone);
+            if (rewards.Count > 0)
+            {
+                b.DrawString(Game1.smallFont, "Rewards:", new Vector2(x, y), Color.Black);
+                y += 28;
+
+                foreach (var reward in rewards)
+                {
+                    int textX = x + 8;
+                    if (itemCache.TryGetValue(reward.ItemId, out var cachedReward))
+                    {
+                        cachedReward.drawInMenu(b, new Vector2(x - 20, y - 24), 0.5f, 1f, 0.9f, StackDrawType.Hide);
+                        textX = x + 24;
+                    }
+                    b.DrawString(Game1.smallFont, $"{reward.DisplayName} x{reward.Count}", new Vector2(textX, y), Color.DarkGoldenrod);
+                    y += 36;
+                }
             }
 
             // Prerequisites: zone requirement
@@ -440,14 +484,11 @@ namespace ZoneLockChallenge
                     Color.Gray);
             }
 
-            // "Move Plate" link (host only)
+            // Host-only links: "Move Plate" and "Edit Zone"
             if (onRequestPlatePlacement != null)
             {
                 var plate = stateManager.GetEffectivePlate(zone);
                 string plateInfo = plate != null ? $"{plate.LocationName} ({plate.X}, {plate.Y})" : "not set";
-                string moveText = "Move Plate";
-                Vector2 moveSize = Game1.smallFont.MeasureString(moveText);
-                int moveX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - (int)moveSize.X) / 2;
                 int infoY = purchaseButton.bounds.Bottom + 12;
 
                 // Plate location info
@@ -457,10 +498,23 @@ namespace ZoneLockChallenge
                     new Vector2(purchaseButton.bounds.X + (purchaseButton.bounds.Width - infoSize.X) / 2, infoY),
                     Color.Gray);
 
-                // Clickable "Move Plate" text below (must match click area: infoY + 28 + 4)
+                // "Move Plate" and "Edit Zone" links side by side
+                string moveText = "Move Plate";
+                string editText = "Edit Zone";
+                Vector2 moveSize = Game1.smallFont.MeasureString(moveText);
+                Vector2 editSize = Game1.smallFont.MeasureString(editText);
                 int linkY = infoY + 28 + 4;
-                b.DrawString(Game1.smallFont, moveText, new Vector2(moveX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
-                b.DrawString(Game1.smallFont, moveText, new Vector2(moveX, linkY), Color.SaddleBrown, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                int totalLinksWidth = (int)moveSize.X + 24 + (int)editSize.X;
+                int linksStartX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - totalLinksWidth) / 2;
+
+                // "Move Plate" link
+                b.DrawString(Game1.smallFont, moveText, new Vector2(linksStartX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                b.DrawString(Game1.smallFont, moveText, new Vector2(linksStartX, linkY), Color.SaddleBrown, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+
+                // "Edit Zone" link
+                int editX = linksStartX + (int)moveSize.X + 24;
+                b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY), Color.SaddleBrown, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
             }
         }
 
@@ -471,6 +525,12 @@ namespace ZoneLockChallenge
             if (zone.UnlockType == "ticket" && stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID)) return false;
             if (!stateManager.ArePrerequisitesMet(zone)) return false;
             return true;
+        }
+
+        private void CacheItem(string itemId)
+        {
+            if (string.IsNullOrEmpty(itemId) || itemCache.ContainsKey(itemId)) return;
+            try { var item = ItemRegistry.Create(itemId); if (item != null) itemCache[itemId] = item; } catch { }
         }
     }
 }

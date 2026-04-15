@@ -13,6 +13,8 @@ namespace ZoneLockChallenge
         public Dictionary<string, Dictionary<long, int>> ActiveTickets { get; set; } = new();
         /// <summary>Host-managed plate position overrides (synced to all players).</summary>
         public Dictionary<string, PlateTile> PlateOverrides { get; set; } = new();
+        /// <summary>Host-managed zone config overrides (cost, items, rewards). Synced to all players.</summary>
+        public Dictionary<string, ZoneConfigOverride> ZoneOverrides { get; set; } = new();
     }
 
     public class ZoneSyncMessage
@@ -20,6 +22,7 @@ namespace ZoneLockChallenge
         public HashSet<string> UnlockedZones { get; set; } = new();
         public Dictionary<string, Dictionary<long, int>> ActiveTickets { get; set; } = new();
         public Dictionary<string, PlateTile> PlateOverrides { get; set; } = new();
+        public Dictionary<string, ZoneConfigOverride> ZoneOverrides { get; set; } = new();
     }
 
     public class ZonePurchaseRequest
@@ -159,14 +162,50 @@ namespace ZoneLockChallenge
             return total;
         }
 
+        /// <summary>Get the effective base gold cost for a zone (override or config default).</summary>
+        public int GetEffectiveBaseCost(ZoneDefinition zone)
+        {
+            if (State.ZoneOverrides.TryGetValue(zone.ZoneId, out var ov) && ov.MoneyCost.HasValue)
+                return ov.MoneyCost.Value;
+            return zone.MoneyCost;
+        }
+
+        /// <summary>Get the effective item requirements for a zone (override or config default).</summary>
+        public List<ItemCost> GetEffectiveItems(ZoneDefinition zone)
+        {
+            if (State.ZoneOverrides.TryGetValue(zone.ZoneId, out var ov) && ov.Items != null)
+                return ov.Items;
+            return zone.Items;
+        }
+
+        /// <summary>Get the rewards for a zone (from override data; empty if none configured).</summary>
+        public List<ItemCost> GetRewards(ZoneDefinition zone)
+        {
+            if (State.ZoneOverrides.TryGetValue(zone.ZoneId, out var ov) && ov.Rewards != null)
+                return ov.Rewards;
+            return new List<ItemCost>();
+        }
+
+        /// <summary>Set a zone config override (host only). Saves state and broadcasts to all players.</summary>
+        public void SetZoneOverride(string zoneId, ZoneConfigOverride zoneOverride)
+        {
+            State.ZoneOverrides[zoneId] = zoneOverride;
+            if (Context.IsMainPlayer)
+            {
+                SaveState();
+                BroadcastState();
+            }
+        }
+
         /// <summary>Get the gold cost for a zone, scaled by number of already-unlocked zones.</summary>
         public int GetScaledMoneyCost(ZoneDefinition zone)
         {
+            int baseCost = GetEffectiveBaseCost(zone);
             if (config.CostScalingPercent <= 0)
-                return zone.MoneyCost;
+                return baseCost;
             int unlockedCount = State.UnlockedZones.Count;
             double multiplier = 1.0 + (config.CostScalingPercent / 100.0) * unlockedCount;
-            return (int)(zone.MoneyCost * multiplier);
+            return (int)(baseCost * multiplier);
         }
 
         public bool TryPurchase(string zoneId, Farmer buyer)
@@ -186,10 +225,11 @@ namespace ZoneLockChallenge
             if (!ArePrerequisitesMet(zone)) return false;
             if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId)) return false;
 
+            var effectiveItems = GetEffectiveItems(zone);
             int scaledCost = GetScaledMoneyCost(zone);
             if (buyer.Money < scaledCost) return false;
 
-            foreach (var itemCost in zone.Items)
+            foreach (var itemCost in effectiveItems)
                 if (CountItemInInventory(buyer, itemCost.ItemId) < itemCost.Count)
                     return false;
 
@@ -200,8 +240,11 @@ namespace ZoneLockChallenge
             if (isLocalBuyer)
             {
                 buyer.Money -= scaledCost;
-                foreach (var itemCost in zone.Items)
+                foreach (var itemCost in effectiveItems)
                     RemoveItemsFromInventory(buyer, itemCost.ItemId, itemCost.Count);
+
+                // Give rewards to local buyer
+                GiveRewards(zone);
             }
 
             if (zone.UnlockType == "permanent")
@@ -231,6 +274,25 @@ namespace ZoneLockChallenge
             return count;
         }
 
+        /// <summary>Give reward items to the local player for completing a zone bundle.</summary>
+        private void GiveRewards(ZoneDefinition zone)
+        {
+            var rewards = GetRewards(zone);
+            foreach (var reward in rewards)
+            {
+                try
+                {
+                    var item = ItemRegistry.Create(reward.ItemId, reward.Count);
+                    if (item != null)
+                    {
+                        if (!Game1.player.addItemToInventoryBool(item))
+                            Game1.createItemDebris(item, Game1.player.getStandingPosition(), -1);
+                    }
+                }
+                catch { monitor.Log($"Failed to create reward item '{reward.ItemId}'.", LogLevel.Warn); }
+            }
+        }
+
         private void RemoveItemsFromInventory(Farmer farmer, string qualifiedItemId, int amount)
         {
             int remaining = amount;
@@ -257,11 +319,22 @@ namespace ZoneLockChallenge
             var plateOverridesCopy = new Dictionary<string, PlateTile>();
             foreach (var kv in State.PlateOverrides)
                 plateOverridesCopy[kv.Key] = new PlateTile { LocationName = kv.Value.LocationName, X = kv.Value.X, Y = kv.Value.Y };
+            var zoneOverridesCopy = new Dictionary<string, ZoneConfigOverride>();
+            foreach (var kv in State.ZoneOverrides)
+            {
+                zoneOverridesCopy[kv.Key] = new ZoneConfigOverride
+                {
+                    MoneyCost = kv.Value.MoneyCost,
+                    Items = kv.Value.Items?.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList(),
+                    Rewards = kv.Value.Rewards?.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList()
+                };
+            }
             var message = new ZoneSyncMessage
             {
                 UnlockedZones = new HashSet<string>(State.UnlockedZones),
                 ActiveTickets = ticketsCopy,
-                PlateOverrides = plateOverridesCopy
+                PlateOverrides = plateOverridesCopy,
+                ZoneOverrides = zoneOverridesCopy
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -300,6 +373,7 @@ namespace ZoneLockChallenge
                 State.UnlockedZones = sync.UnlockedZones;
                 State.ActiveTickets = sync.ActiveTickets;
                 State.PlateOverrides = sync.PlateOverrides ?? new Dictionary<string, PlateTile>();
+                State.ZoneOverrides = sync.ZoneOverrides ?? new Dictionary<string, ZoneConfigOverride>();
                 OnStateChanged?.Invoke();
             }
 
@@ -307,7 +381,7 @@ namespace ZoneLockChallenge
             {
                 var response = e.ReadAs<ZonePurchaseResponse>();
 
-                // Deduct money and items locally on the farmhand's side
+                // Deduct money and items locally on the farmhand's side, and give rewards
                 if (response.Success)
                 {
                     var zone = config.Zones.FirstOrDefault(z => z.ZoneId == response.ZoneId);
@@ -315,8 +389,10 @@ namespace ZoneLockChallenge
                     {
                         int scaledCost = GetScaledMoneyCost(zone);
                         Game1.player.Money -= scaledCost;
-                        foreach (var itemCost in zone.Items)
+                        var effectiveItems = GetEffectiveItems(zone);
+                        foreach (var itemCost in effectiveItems)
                             RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
+                        GiveRewards(zone);
                     }
                 }
 

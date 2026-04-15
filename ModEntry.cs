@@ -237,7 +237,8 @@ namespace ZoneLockChallenge
 
                     // Open purchase menu focused on this zone
                     Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: true, focusZoneId: zone.ZoneId,
-                        onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null);
+                        onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null,
+                        onRequestZoneEdit: Context.IsMainPlayer ? RequestZoneEdit : null);
                     Game1.playSound("bigSelect");
                     Helper.Input.Suppress(e.Button);
                     return;
@@ -273,7 +274,8 @@ namespace ZoneLockChallenge
                 && e.Button == configuredKey)
             {
                 Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: false,
-                    onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null);
+                    onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null,
+                    onRequestZoneEdit: Context.IsMainPlayer ? RequestZoneEdit : null);
                 Game1.playSound("bigSelect");
             }
         }
@@ -312,6 +314,15 @@ namespace ZoneLockChallenge
             platePlacementZoneId = targetZone.ZoneId;
             Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{targetZone.DisplayName}' plate.", HUDMessage.newQuest_type));
             Monitor.Log($"Plate placement mode active for '{targetZone.ZoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);
+        }
+
+        /// <summary>Called by BundleMenu to open the zone edit menu (host only).</summary>
+        private void RequestZoneEdit(string zoneId)
+        {
+            var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+            if (zone == null) return;
+            Game1.activeClickableMenu = new ZoneEditMenu(zone, stateManager);
+            Monitor.Log($"Opened zone editor for '{zone.ZoneId}'.", LogLevel.Info);
         }
 
         /// <summary>Called by BundleMenu to enter plate placement mode for a zone.</summary>

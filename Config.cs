@@ -141,6 +141,13 @@ namespace ZoneLockChallenge
         public int Y { get; set; }
     }
 
+    public class ZoneConfigOverride
+    {
+        public int? MoneyCost { get; set; }
+        public List<ItemCost> Items { get; set; }
+        public List<ItemCost> Rewards { get; set; }
+    }
+
     public class MinecartConfig
     {
         public bool Enabled { get; set; } = true;

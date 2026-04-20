@@ -70,15 +70,16 @@ namespace ZoneLockChallenge
 
         private void OnDayStarted(object sender, DayStartedEventArgs e)
         {
-            var expired = stateManager.CleanupExpiredTickets();
-            if (Context.IsMainPlayer)
+            // Host cleans up + broadcasts; farmhand reads (read-only) its own expired tickets
+            // so it can HUD-announce them even before the sync message arrives.
+            var expired = Context.IsMainPlayer
+                ? stateManager.CleanupExpiredTickets()
+                : stateManager.GetLocalExpiredTicketZones();
+            foreach (var zoneId in expired)
             {
-                foreach (var zoneId in expired)
-                {
-                    var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
-                    if (zone != null)
-                        Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
-                }
+                var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+                if (zone != null)
+                    Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
             }
 
             // Restore friendship points that decreased overnight (prevents daily decay)
@@ -359,6 +360,7 @@ namespace ZoneLockChallenge
                     onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null,
                     onRequestZoneEdit: Context.IsMainPlayer ? RequestZoneEdit : null);
                 Game1.playSound("bigSelect");
+                Helper.Input.Suppress(e.Button);
             }
         }
 
@@ -369,6 +371,13 @@ namespace ZoneLockChallenge
             if (!Context.IsWorldReady)
             {
                 Monitor.Log("You must be in-game to use this command.", LogLevel.Warn);
+                return;
+            }
+
+            // Only the host can move plates — overrides are stored in the host's save.
+            if (!Context.IsMainPlayer && args.Length > 0 && !args[0].Equals("list", StringComparison.OrdinalIgnoreCase))
+            {
+                Monitor.Log("Only the host can move plates. Ask the host to run this command.", LogLevel.Warn);
                 return;
             }
 

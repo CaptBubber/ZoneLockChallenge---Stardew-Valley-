@@ -42,6 +42,8 @@ namespace ZoneLockChallenge
         public string ZoneId { get; set; }
         public bool Success { get; set; }
         public string Message { get; set; }
+        /// <summary>Host-authoritative scaled gold cost the farmhand should deduct (prevents re-scaling drift on the farmhand).</summary>
+        public int ScaledCost { get; set; }
     }
 
     public class ZoneStateManager
@@ -108,12 +110,10 @@ namespace ZoneLockChallenge
         /// <summary>Set a plate override (host only). Saves state and broadcasts to all players.</summary>
         public void SetPlateOverride(string zoneId, PlateTile plate)
         {
+            if (!Context.IsMainPlayer) return;
             State.PlateOverrides[zoneId] = plate;
-            if (Context.IsMainPlayer)
-            {
-                SaveState();
-                BroadcastState();
-            }
+            SaveState();
+            BroadcastState();
         }
 
         public bool HasActiveTicket(string zoneId, long farmerId) =>
@@ -195,12 +195,10 @@ namespace ZoneLockChallenge
         /// <summary>Set a zone config override (host only). Saves state and broadcasts to all players.</summary>
         public void SetZoneOverride(string zoneId, ZoneConfigOverride zoneOverride)
         {
+            if (!Context.IsMainPlayer) return;
             State.ZoneOverrides[zoneId] = zoneOverride;
-            if (Context.IsMainPlayer)
-            {
-                SaveState();
-                BroadcastState();
-            }
+            SaveState();
+            BroadcastState();
         }
 
         /// <summary>Get zones in the effective display order (save-data ZoneOrder first, then any config zones not yet in the order).</summary>
@@ -259,12 +257,10 @@ namespace ZoneLockChallenge
         /// <summary>Set mine level gate overrides (host only). Saves and broadcasts.</summary>
         public void SetMineLevelGateOverrides(List<MineLevelGate> gates)
         {
+            if (!Context.IsMainPlayer) return;
             State.MineLevelGateOverrides = gates?.Select(g => new MineLevelGate { FloorNumber = g.FloorNumber, RequiredMiningLevel = g.RequiredMiningLevel }).ToList();
-            if (Context.IsMainPlayer)
-            {
-                SaveState();
-                BroadcastState();
-            }
+            SaveState();
+            BroadcastState();
         }
 
         /// <summary>Check if a specific mine floor is allowed based on collective mining level.</summary>
@@ -292,22 +288,23 @@ namespace ZoneLockChallenge
         public bool TryPurchase(string zoneId, Farmer buyer)
         {
             if (Context.IsMainPlayer)
-                return ExecutePurchase(zoneId, buyer);
+                return ExecutePurchase(zoneId, buyer, out _);
 
             var request = new ZonePurchaseRequest { ZoneId = zoneId, FarmerId = buyer.UniqueMultiplayerID };
             helper.Multiplayer.SendMessage(request, PurchaseRequestType, modIDs: new[] { helper.ModRegistry.ModID });
             return false;
         }
 
-        private bool ExecutePurchase(string zoneId, Farmer buyer)
+        private bool ExecutePurchase(string zoneId, Farmer buyer, out int scaledCost)
         {
+            scaledCost = 0;
             var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
             if (zone == null) return false;
             if (!ArePrerequisitesMet(zone)) return false;
             if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId)) return false;
 
             var effectiveItems = GetEffectiveItems(zone);
-            int scaledCost = GetScaledMoneyCost(zone);
+            scaledCost = GetScaledMoneyCost(zone);
             if (buyer.Money < scaledCost) return false;
 
             foreach (var itemCost in effectiveItems)
@@ -439,11 +436,12 @@ namespace ZoneLockChallenge
                 var buyer = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (buyer != null)
                 {
-                    bool success = ExecutePurchase(request.ZoneId, buyer);
+                    bool success = ExecutePurchase(request.ZoneId, buyer, out int scaledCost);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId,
                         Success = success,
+                        ScaledCost = success ? scaledCost : 0,
                         Message = success ? "Purchase successful!" : "Purchase failed. Check your funds and inventory."
                     };
                     helper.Multiplayer.SendMessage(response, PurchaseResponseType,
@@ -467,14 +465,16 @@ namespace ZoneLockChallenge
             {
                 var response = e.ReadAs<ZonePurchaseResponse>();
 
-                // Deduct money and items locally on the farmhand's side, and give rewards
+                // Deduct money and items locally on the farmhand's side, and give rewards.
+                // Use the host's authoritative ScaledCost — recomputing locally would drift
+                // because the sync message (which adds the just-purchased zone to
+                // UnlockedZones) typically arrives before this response, inflating the scale.
                 if (response.Success)
                 {
                     var zone = config.Zones.FirstOrDefault(z => z.ZoneId == response.ZoneId);
                     if (zone != null)
                     {
-                        int scaledCost = GetScaledMoneyCost(zone);
-                        Game1.player.Money -= scaledCost;
+                        Game1.player.Money -= response.ScaledCost;
                         var effectiveItems = GetEffectiveItems(zone);
                         foreach (var itemCost in effectiveItems)
                             RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
@@ -487,6 +487,18 @@ namespace ZoneLockChallenge
 
             if (e.Type == "ZoneLockChallenge_SyncRequest" && Context.IsMainPlayer)
                 BroadcastState();
+        }
+
+        /// <summary>Returns zone IDs where the local player had a ticket yesterday (or earlier) that no longer applies today. Read-only — does not modify state.</summary>
+        public List<string> GetLocalExpiredTicketZones()
+        {
+            int today = Game1.Date.TotalDays;
+            long localId = Game1.player.UniqueMultiplayerID;
+            var result = new List<string>();
+            foreach (var kv in State.ActiveTickets)
+                if (kv.Value.TryGetValue(localId, out int day) && day < today)
+                    result.Add(kv.Key);
+            return result;
         }
 
         /// <summary>Expire old tickets. Returns list of zone IDs where the local player's ticket expired (for HUD messages).</summary>

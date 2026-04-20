@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ZoneLockChallenge
 {
@@ -26,6 +27,9 @@ namespace ZoneLockChallenge
             new MineLevelGate { FloorNumber = 75, RequiredMiningLevel = 8 },
             new MineLevelGate { FloorNumber = 100, RequiredMiningLevel = 10 }
         };
+
+        public ZoneDefinition GetZoneById(string zoneId) =>
+            Zones.FirstOrDefault(z => z.ZoneId == zoneId);
 
         public List<ZoneDefinition> Zones { get; set; } = new()
         {

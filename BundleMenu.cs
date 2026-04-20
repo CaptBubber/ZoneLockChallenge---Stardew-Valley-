@@ -268,7 +268,7 @@ namespace ZoneLockChallenge
                 // Check which prerequisite is not met for a specific error message
                 if (!string.IsNullOrEmpty(zone.RequiresZone) && !stateManager.IsZonePermanentlyUnlocked(zone.RequiresZone))
                 {
-                    var req = config.Zones.FirstOrDefault(z => z.ZoneId == zone.RequiresZone);
+                    var req = config.GetZoneById(zone.RequiresZone);
                     ShowStatus($"Requires: {req?.DisplayName ?? zone.RequiresZone}", true);
                 }
                 else if (!string.IsNullOrEmpty(zone.RequiredSkill) && zone.RequiredSkillLevel > 0)
@@ -498,7 +498,7 @@ namespace ZoneLockChallenge
             // Prerequisites: zone requirement
             if (!string.IsNullOrEmpty(zone.RequiresZone))
             {
-                var req = config.Zones.FirstOrDefault(z => z.ZoneId == zone.RequiresZone);
+                var req = config.GetZoneById(zone.RequiresZone);
                 bool zoneMet = stateManager.IsZonePermanentlyUnlocked(zone.RequiresZone);
                 b.DrawString(Game1.smallFont, $"Requires: {req?.DisplayName ?? zone.RequiresZone}", new Vector2(x, y), zoneMet ? Color.DarkGreen : Color.DarkRed);
                 y += 32;

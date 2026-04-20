@@ -70,14 +70,12 @@ namespace ZoneLockChallenge
 
         private void OnDayStarted(object sender, DayStartedEventArgs e)
         {
-            // Host cleans up + broadcasts; farmhand reads (read-only) its own expired tickets
-            // so it can HUD-announce them even before the sync message arrives.
             var expired = Context.IsMainPlayer
                 ? stateManager.CleanupExpiredTickets()
                 : stateManager.GetLocalExpiredTicketZones();
             foreach (var zoneId in expired)
             {
-                var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+                var zone = config.GetZoneById(zoneId);
                 if (zone != null)
                     Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
             }
@@ -266,7 +264,7 @@ namespace ZoneLockChallenge
                 // Plate placement mode: place the plate at the clicked tile
                 if (platePlacementZoneId != null)
                 {
-                    var zone = config.Zones.FirstOrDefault(z => z.ZoneId == platePlacementZoneId);
+                    var zone = config.GetZoneById(platePlacementZoneId);
                     if (zone != null)
                     {
                         var newPlate = new PlateTile { LocationName = locName, X = tileX, Y = tileY };
@@ -374,13 +372,6 @@ namespace ZoneLockChallenge
                 return;
             }
 
-            // Only the host can move plates — overrides are stored in the host's save.
-            if (!Context.IsMainPlayer && args.Length > 0 && !args[0].Equals("list", StringComparison.OrdinalIgnoreCase))
-            {
-                Monitor.Log("Only the host can move plates. Ask the host to run this command.", LogLevel.Warn);
-                return;
-            }
-
             if (args.Length == 0 || args[0].Equals("list", StringComparison.OrdinalIgnoreCase))
             {
                 Monitor.Log("Available zones:", LogLevel.Info);
@@ -391,6 +382,12 @@ namespace ZoneLockChallenge
                     Monitor.Log($"  {zone.ZoneId} — {zone.DisplayName} — plate at: {plateLoc}", LogLevel.Info);
                 }
                 Monitor.Log("Usage: zlc_moveplate <ZoneId> — then click a tile in-game to place the plate.", LogLevel.Info);
+                return;
+            }
+
+            if (!Context.IsMainPlayer)
+            {
+                Monitor.Log("Only the host can move plates.", LogLevel.Warn);
                 return;
             }
 
@@ -410,7 +407,7 @@ namespace ZoneLockChallenge
         /// <summary>Called by BundleMenu to open the zone edit menu (host only).</summary>
         private void RequestZoneEdit(string zoneId)
         {
-            var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+            var zone = config.GetZoneById(zoneId);
             if (zone == null) return;
             Game1.activeClickableMenu = new ZoneEditMenu(zone, stateManager);
             Monitor.Log($"Opened zone editor for '{zone.ZoneId}'.", LogLevel.Info);
@@ -420,7 +417,7 @@ namespace ZoneLockChallenge
         private void RequestPlatePlacement(string zoneId)
         {
             platePlacementZoneId = zoneId;
-            var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+            var zone = config.GetZoneById(zoneId);
             string name = zone?.DisplayName ?? zoneId;
             Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{name}' plate.", HUDMessage.newQuest_type));
             Monitor.Log($"Plate placement mode active for '{zoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);

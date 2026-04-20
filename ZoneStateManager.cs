@@ -42,7 +42,6 @@ namespace ZoneLockChallenge
         public string ZoneId { get; set; }
         public bool Success { get; set; }
         public string Message { get; set; }
-        /// <summary>Host-authoritative scaled gold cost the farmhand should deduct (prevents re-scaling drift on the farmhand).</summary>
         public int ScaledCost { get; set; }
     }
 
@@ -87,6 +86,12 @@ namespace ZoneLockChallenge
                 helper.Data.WriteSaveData(SaveDataKey, State);
         }
 
+        private void SaveAndBroadcast()
+        {
+            SaveState();
+            BroadcastState();
+        }
+
         public bool IsZoneAccessible(string zoneId, long farmerId)
         {
             if (State.UnlockedZones.Contains(zoneId))
@@ -107,13 +112,11 @@ namespace ZoneLockChallenge
             return zone.Plate;
         }
 
-        /// <summary>Set a plate override (host only). Saves state and broadcasts to all players.</summary>
         public void SetPlateOverride(string zoneId, PlateTile plate)
         {
             if (!Context.IsMainPlayer) return;
             State.PlateOverrides[zoneId] = plate;
-            SaveState();
-            BroadcastState();
+            SaveAndBroadcast();
         }
 
         public bool HasActiveTicket(string zoneId, long farmerId) =>
@@ -192,13 +195,11 @@ namespace ZoneLockChallenge
             return new List<ItemCost>();
         }
 
-        /// <summary>Set a zone config override (host only). Saves state and broadcasts to all players.</summary>
         public void SetZoneOverride(string zoneId, ZoneConfigOverride zoneOverride)
         {
             if (!Context.IsMainPlayer) return;
             State.ZoneOverrides[zoneId] = zoneOverride;
-            SaveState();
-            BroadcastState();
+            SaveAndBroadcast();
         }
 
         /// <summary>Get zones in the effective display order (save-data ZoneOrder first, then any config zones not yet in the order).</summary>
@@ -208,7 +209,7 @@ namespace ZoneLockChallenge
             var seen = new HashSet<string>();
             foreach (var zoneId in State.ZoneOrder)
             {
-                var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+                var zone = config.GetZoneById(zoneId);
                 if (zone != null && seen.Add(zoneId))
                     result.Add(zone);
             }
@@ -230,8 +231,7 @@ namespace ZoneLockChallenge
             ordered.RemoveAt(idx);
             ordered.Insert(newIdx, zoneId);
             State.ZoneOrder = ordered;
-            SaveState();
-            BroadcastState();
+            SaveAndBroadcast();
             return true;
         }
 
@@ -254,13 +254,11 @@ namespace ZoneLockChallenge
             return State.MineLevelGateOverrides ?? config.MineLevelGates ?? new List<MineLevelGate>();
         }
 
-        /// <summary>Set mine level gate overrides (host only). Saves and broadcasts.</summary>
         public void SetMineLevelGateOverrides(List<MineLevelGate> gates)
         {
             if (!Context.IsMainPlayer) return;
             State.MineLevelGateOverrides = gates?.Select(g => new MineLevelGate { FloorNumber = g.FloorNumber, RequiredMiningLevel = g.RequiredMiningLevel }).ToList();
-            SaveState();
-            BroadcastState();
+            SaveAndBroadcast();
         }
 
         /// <summary>Check if a specific mine floor is allowed based on collective mining level.</summary>
@@ -298,7 +296,7 @@ namespace ZoneLockChallenge
         private bool ExecutePurchase(string zoneId, Farmer buyer, out int scaledCost)
         {
             scaledCost = 0;
-            var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+            var zone = config.GetZoneById(zoneId);
             if (zone == null) return false;
             if (!ArePrerequisitesMet(zone)) return false;
             if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId)) return false;
@@ -465,13 +463,10 @@ namespace ZoneLockChallenge
             {
                 var response = e.ReadAs<ZonePurchaseResponse>();
 
-                // Deduct money and items locally on the farmhand's side, and give rewards.
-                // Use the host's authoritative ScaledCost — recomputing locally would drift
-                // because the sync message (which adds the just-purchased zone to
-                // UnlockedZones) typically arrives before this response, inflating the scale.
+                // Use host's authoritative ScaledCost to avoid drift from sync arriving first.
                 if (response.Success)
                 {
-                    var zone = config.Zones.FirstOrDefault(z => z.ZoneId == response.ZoneId);
+                    var zone = config.GetZoneById(response.ZoneId);
                     if (zone != null)
                     {
                         Game1.player.Money -= response.ScaledCost;

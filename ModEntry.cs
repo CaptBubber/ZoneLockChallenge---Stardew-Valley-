@@ -27,6 +27,9 @@ namespace ZoneLockChallenge
         // Plate repositioning mode
         private string platePlacementZoneId;
 
+        // Friendship decay prevention: snapshot taken on DayEnding, restored on DayStarted
+        private Dictionary<string, int> friendshipSnapshot = new();
+
         public override void Entry(IModHelper helper)
         {
             config = helper.ReadConfig<ModConfig>();
@@ -38,6 +41,7 @@ namespace ZoneLockChallenge
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
             helper.Events.GameLoop.Saving += OnSaving;
             helper.Events.GameLoop.DayStarted += OnDayStarted;
+            helper.Events.GameLoop.DayEnding += OnDayEnding;
             helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
             helper.Events.Player.Warped += OnPlayerWarped;
             helper.Events.Input.ButtonPressed += OnButtonPressed;
@@ -66,7 +70,6 @@ namespace ZoneLockChallenge
 
         private void OnDayStarted(object sender, DayStartedEventArgs e)
         {
-            // FIX: Only show "ticket expired" for zones that actually had a ticket yesterday
             var expired = stateManager.CleanupExpiredTickets();
             if (Context.IsMainPlayer)
             {
@@ -77,9 +80,38 @@ namespace ZoneLockChallenge
                         Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
                 }
             }
+
+            // Restore friendship points that decreased overnight (prevents daily decay)
+            if (config.PreventFriendshipDecay && friendshipSnapshot.Count > 0)
+            {
+                int restored = 0;
+                foreach (var kvp in friendshipSnapshot)
+                {
+                    if (Game1.player.friendshipData.ContainsKey(kvp.Key))
+                    {
+                        var friendship = Game1.player.friendshipData[kvp.Key];
+                        if (friendship.Points < kvp.Value)
+                        {
+                            friendship.Points = kvp.Value;
+                            restored++;
+                        }
+                    }
+                }
+                if (restored > 0)
+                    Monitor.Log($"Restored friendship decay for {restored} NPC(s).", LogLevel.Trace);
+                friendshipSnapshot.Clear();
+            }
         }
 
-        private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e) { isWarpingBack = false; warpBackFramesLeft = 0; }
+        private void OnDayEnding(object sender, DayEndingEventArgs e)
+        {
+            if (!config.PreventFriendshipDecay) return;
+            friendshipSnapshot.Clear();
+            foreach (var kvp in Game1.player.friendshipData.Pairs)
+                friendshipSnapshot[kvp.Key] = kvp.Value.Points;
+        }
+
+        private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e) { isWarpingBack = false; warpBackFramesLeft = 0; friendshipSnapshot.Clear(); }
 
         private void OnPeerConnected(object sender, PeerConnectedEventArgs e)
         {

@@ -37,6 +37,9 @@ namespace ZoneLockChallenge
         private ClickableTextureComponent upArrow;
         private ClickableTextureComponent downArrow;
         private List<ClickableComponent> zoneSlots = new();
+        private List<ClickableTextureComponent> reorderUpButtons = new();
+        private List<ClickableTextureComponent> reorderDownButtons = new();
+        private List<ZoneDefinition> orderedZones = new();
 
         private Rectangle leftPanelRect;
         private Rectangle rightPanelRect;
@@ -59,7 +62,8 @@ namespace ZoneLockChallenge
 
             stateManager.OnPurchaseResponse = OnPurchaseResponse;
 
-            foreach (var zone in config.Zones)
+            RefreshOrderedZones();
+            foreach (var zone in orderedZones)
             {
                 foreach (var itemCost in zone.Items)
                     CacheItem(itemCost.ItemId);
@@ -74,13 +78,18 @@ namespace ZoneLockChallenge
             // Auto-select a zone if requested
             if (focusZoneId != null)
             {
-                int idx = config.Zones.FindIndex(z => z.ZoneId == focusZoneId);
+                int idx = orderedZones.FindIndex(z => z.ZoneId == focusZoneId);
                 if (idx >= 0)
                 {
                     selectedIndex = idx;
                     if (idx >= maxVisibleRows) scrollOffset = idx - maxVisibleRows + 1;
                 }
             }
+        }
+
+        private void RefreshOrderedZones()
+        {
+            orderedZones = stateManager.GetOrderedZones();
         }
 
         private void SetupLayout()
@@ -96,10 +105,33 @@ namespace ZoneLockChallenge
             maxVisibleRows = (leftPanelRect.Height - Padding * 2) / ZoneRowHeight;
 
             zoneSlots.Clear();
+            reorderUpButtons.Clear();
+            reorderDownButtons.Clear();
+            bool canReorder = onRequestZoneEdit != null; // host-only (same gate as edit/move)
+            // Reserve column for reorder buttons LEFT of scroll arrow column (right-most 44px reserved for scroll arrows)
+            const int ScrollArrowColW = 48;
+            const int ReorderBtnW = 32;
+            int reorderColReserve = canReorder ? (ReorderBtnW + 8) : 0;
+            int slotW = LeftPanelWidth - Padding * 2 - reorderColReserve - (canReorder ? ScrollArrowColW : 0);
             for (int i = 0; i < maxVisibleRows; i++)
+            {
+                int rowY = leftPanelRect.Y + Padding + i * ZoneRowHeight;
                 zoneSlots.Add(new ClickableComponent(
-                    new Rectangle(leftPanelRect.X + Padding, leftPanelRect.Y + Padding + i * ZoneRowHeight, LeftPanelWidth - Padding * 2, ZoneRowHeight - 4),
+                    new Rectangle(leftPanelRect.X + Padding, rowY, slotW, ZoneRowHeight - 4),
                     $"zone_{i}"));
+
+                if (canReorder)
+                {
+                    int btnX = leftPanelRect.Right - ScrollArrowColW - ReorderBtnW - 4;
+                    int btnH = (ZoneRowHeight - 4) / 2 - 2;
+                    reorderUpButtons.Add(new ClickableTextureComponent(
+                        new Rectangle(btnX, rowY, ReorderBtnW, btnH),
+                        Game1.mouseCursors, new Rectangle(421, 459, 11, 12), 2.5f));
+                    reorderDownButtons.Add(new ClickableTextureComponent(
+                        new Rectangle(btnX, rowY + btnH + 4, ReorderBtnW, btnH),
+                        Game1.mouseCursors, new Rectangle(421, 472, 11, 12), 2.5f));
+                }
+            }
 
             upArrow = new ClickableTextureComponent(
                 new Rectangle(leftPanelRect.Right - 44, leftPanelRect.Y, 44, 48),
@@ -121,24 +153,53 @@ namespace ZoneLockChallenge
         {
             base.receiveLeftClick(x, y, playSound);
 
+            // Reorder up/down (host only)
+            for (int i = 0; i < reorderUpButtons.Count; i++)
+            {
+                int dataIndex = scrollOffset + i;
+                if (dataIndex >= orderedZones.Count) break;
+                if (reorderUpButtons[i].containsPoint(x, y) && dataIndex > 0)
+                {
+                    var zone = orderedZones[dataIndex];
+                    if (stateManager.MoveZoneInOrder(zone.ZoneId, -1))
+                    {
+                        RefreshOrderedZones();
+                        selectedIndex = dataIndex - 1;
+                        Game1.playSound("shwip");
+                    }
+                    return;
+                }
+                if (reorderDownButtons[i].containsPoint(x, y) && dataIndex < orderedZones.Count - 1)
+                {
+                    var zone = orderedZones[dataIndex];
+                    if (stateManager.MoveZoneInOrder(zone.ZoneId, 1))
+                    {
+                        RefreshOrderedZones();
+                        selectedIndex = dataIndex + 1;
+                        Game1.playSound("shwip");
+                    }
+                    return;
+                }
+            }
+
             for (int i = 0; i < zoneSlots.Count; i++)
             {
                 if (zoneSlots[i].containsPoint(x, y))
                 {
                     int dataIndex = scrollOffset + i;
-                    if (dataIndex < config.Zones.Count) { selectedIndex = dataIndex; Game1.playSound("smallSelect"); }
+                    if (dataIndex < orderedZones.Count) { selectedIndex = dataIndex; Game1.playSound("smallSelect"); }
                     return;
                 }
             }
 
             if (upArrow.containsPoint(x, y) && scrollOffset > 0) { scrollOffset--; Game1.playSound("shwip"); return; }
-            if (downArrow.containsPoint(x, y) && scrollOffset + maxVisibleRows < config.Zones.Count) { scrollOffset++; Game1.playSound("shwip"); return; }
+            if (downArrow.containsPoint(x, y) && scrollOffset + maxVisibleRows < orderedZones.Count) { scrollOffset++; Game1.playSound("shwip"); return; }
 
             if (purchaseEnabled && purchaseButton.containsPoint(x, y) && !waitingForResponse)
                 TryPurchaseSelected();
 
             // "Move Plate" and "Edit Zone" click areas (host only, below purchase button)
-            if (onRequestPlatePlacement != null && selectedIndex >= 0 && selectedIndex < config.Zones.Count)
+            if (onRequestPlatePlacement != null && selectedIndex >= 0 && selectedIndex < orderedZones.Count)
             {
                 string moveText = "Move Plate";
                 string editText = "Edit Zone";
@@ -152,7 +213,7 @@ namespace ZoneLockChallenge
                 Rectangle moveArea = new(linksStartX, linkY, (int)moveSize.X, (int)moveSize.Y);
                 if (moveArea.Contains(x, y))
                 {
-                    var zone = config.Zones[selectedIndex];
+                    var zone = orderedZones[selectedIndex];
                     onRequestPlatePlacement.Invoke(zone.ZoneId);
                     Game1.playSound("smallSelect");
                     exitThisMenu();
@@ -163,7 +224,7 @@ namespace ZoneLockChallenge
                 Rectangle editArea = new(editX, linkY, (int)editSize.X, (int)editSize.Y);
                 if (editArea.Contains(x, y) && onRequestZoneEdit != null)
                 {
-                    var zone = config.Zones[selectedIndex];
+                    var zone = orderedZones[selectedIndex];
                     onRequestZoneEdit.Invoke(zone.ZoneId);
                     Game1.playSound("smallSelect");
                     exitThisMenu();
@@ -176,7 +237,7 @@ namespace ZoneLockChallenge
         {
             base.receiveScrollWheelAction(direction);
             if (direction > 0 && scrollOffset > 0) scrollOffset--;
-            else if (direction < 0 && scrollOffset + maxVisibleRows < config.Zones.Count) scrollOffset++;
+            else if (direction < 0 && scrollOffset + maxVisibleRows < orderedZones.Count) scrollOffset++;
         }
 
         public override void receiveKeyPress(Keys key)
@@ -194,8 +255,8 @@ namespace ZoneLockChallenge
 
         private void TryPurchaseSelected()
         {
-            if (selectedIndex < 0 || selectedIndex >= config.Zones.Count) return;
-            var zone = config.Zones[selectedIndex];
+            if (selectedIndex < 0 || selectedIndex >= orderedZones.Count) return;
+            var zone = orderedZones[selectedIndex];
             var farmer = Game1.player;
 
             if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
@@ -271,11 +332,11 @@ namespace ZoneLockChallenge
             DrawZoneList(b);
             DrawPanelBackground(b, rightPanelRect);
 
-            if (selectedIndex >= 0 && selectedIndex < config.Zones.Count)
-                DrawZoneDetails(b, config.Zones[selectedIndex]);
+            if (selectedIndex >= 0 && selectedIndex < orderedZones.Count)
+                DrawZoneDetails(b, orderedZones[selectedIndex]);
 
             if (scrollOffset > 0) upArrow.draw(b);
-            if (scrollOffset + maxVisibleRows < config.Zones.Count) downArrow.draw(b);
+            if (scrollOffset + maxVisibleRows < orderedZones.Count) downArrow.draw(b);
 
             if (!string.IsNullOrEmpty(statusMessage))
             {
@@ -298,9 +359,9 @@ namespace ZoneLockChallenge
             for (int i = 0; i < maxVisibleRows; i++)
             {
                 int dataIndex = scrollOffset + i;
-                if (dataIndex >= config.Zones.Count) break;
+                if (dataIndex >= orderedZones.Count) break;
 
-                var zone = config.Zones[dataIndex];
+                var zone = orderedZones[dataIndex];
                 var slot = zoneSlots[i];
                 bool isSelected = dataIndex == selectedIndex;
                 bool isPermanent = stateManager.IsZonePermanentlyUnlocked(zone.ZoneId);
@@ -326,6 +387,19 @@ namespace ZoneLockChallenge
                     string tag = "[TICKET]";
                     Vector2 tagSize = Game1.smallFont.MeasureString(tag);
                     b.DrawString(Game1.smallFont, tag, new Vector2(slot.bounds.Right - tagSize.X - 4, slot.bounds.Y + (ZoneRowHeight - 28) / 2), Color.DarkGoldenrod);
+                }
+
+                // Host-only reorder buttons on the right edge
+                if (i < reorderUpButtons.Count)
+                {
+                    bool canUp = dataIndex > 0;
+                    bool canDown = dataIndex < orderedZones.Count - 1;
+                    var upBtn = reorderUpButtons[i];
+                    var dnBtn = reorderDownButtons[i];
+                    var upTint = canUp ? Color.White : Color.Gray * 0.4f;
+                    var dnTint = canDown ? Color.White : Color.Gray * 0.4f;
+                    b.Draw(upBtn.texture, new Vector2(upBtn.bounds.X, upBtn.bounds.Y), upBtn.sourceRect, upTint, 0f, Vector2.Zero, upBtn.baseScale, SpriteEffects.None, 0.86f);
+                    b.Draw(dnBtn.texture, new Vector2(dnBtn.bounds.X, dnBtn.bounds.Y), dnBtn.sourceRect, dnTint, 0f, Vector2.Zero, dnBtn.baseScale, SpriteEffects.None, 0.86f);
                 }
             }
         }
@@ -440,7 +514,28 @@ namespace ZoneLockChallenge
                 y += 32;
             }
 
-            // Status — FIX: ticket active text is now green instead of yellow
+            // Mine level gates (Mine zone only)
+            if (zone.ZoneId == "Mine")
+            {
+                var gates = stateManager.GetEffectiveMineLevelGates();
+                if (gates.Count > 0)
+                {
+                    int collectiveMining = stateManager.GetCollectiveSkillLevel("Mining");
+                    b.DrawString(Game1.smallFont, "Mine Floor Gates:", new Vector2(x, y), Color.Black);
+                    y += 26;
+                    foreach (var gate in gates.OrderBy(g => g.FloorNumber))
+                    {
+                        bool met = collectiveMining >= gate.RequiredMiningLevel;
+                        string check = met ? "\u2713 " : "";
+                        b.DrawString(Game1.smallFont, $"{check}Floor {gate.FloorNumber}: Mining Lv {gate.RequiredMiningLevel}",
+                            new Vector2(x + 8, y), met ? Color.DarkGreen : Color.DarkRed);
+                        y += 24;
+                    }
+                    y += 4;
+                }
+            }
+
+            // Status
             y += 8;
             string status; Color statusColor;
             if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))

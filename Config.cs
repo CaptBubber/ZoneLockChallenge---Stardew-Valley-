@@ -12,6 +12,18 @@ namespace ZoneLockChallenge
 
         public MinecartConfig BeachMinecart { get; set; } = new();
 
+        /// <summary>Secondary optional beach bypass. Lets hosts add a second travel sign between the beach and any other location, unlocked once the Beach zone is purchased.</summary>
+        public BypassWarpConfig SecondaryBeachBypass { get; set; } = new();
+
+        /// <summary>Mine floor gates. Every threshold blocks descent past that floor unless collective mining level is met. Requires the Mine zone to be unlocked.</summary>
+        public List<MineLevelGate> MineLevelGates { get; set; } = new()
+        {
+            new MineLevelGate { FloorNumber = 25, RequiredMiningLevel = 3 },
+            new MineLevelGate { FloorNumber = 50, RequiredMiningLevel = 5 },
+            new MineLevelGate { FloorNumber = 75, RequiredMiningLevel = 8 },
+            new MineLevelGate { FloorNumber = 100, RequiredMiningLevel = 10 }
+        };
+
         public List<ZoneDefinition> Zones { get; set; } = new()
         {
             new ZoneDefinition
@@ -141,6 +153,13 @@ namespace ZoneLockChallenge
         public int Y { get; set; }
     }
 
+    /// <summary>A mining level gate: players cannot descend past FloorNumber unless the collective mining level meets the threshold.</summary>
+    public class MineLevelGate
+    {
+        public int FloorNumber { get; set; }
+        public int RequiredMiningLevel { get; set; }
+    }
+
     public class ZoneConfigOverride
     {
         public int? MoneyCost { get; set; }
@@ -161,5 +180,21 @@ namespace ZoneLockChallenge
         public int BeachSignY { get; set; } = 4;
         public int MountainArrivalX { get; set; } = 125;
         public int MountainArrivalY { get; set; } = 12;
+    }
+
+    /// <summary>Generic two-sign bypass warp, unlocked once the Beach zone is purchased.</summary>
+    public class BypassWarpConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string BeachLocation { get; set; } = "Beach";
+        public int BeachSignX { get; set; } = 4;
+        public int BeachSignY { get; set; } = 4;
+        public int BeachArrivalX { get; set; } = 4;
+        public int BeachArrivalY { get; set; } = 4;
+        public string OtherLocation { get; set; } = "Backwoods";
+        public int OtherSignX { get; set; } = 10;
+        public int OtherSignY { get; set; } = 10;
+        public int OtherArrivalX { get; set; } = 10;
+        public int OtherArrivalY { get; set; } = 10;
     }
 }

@@ -133,7 +133,26 @@ namespace ZoneLockChallenge
             long farmerId = Game1.player.UniqueMultiplayerID;
             var zone = stateManager.GetZoneForLocation(newLocationName);
             if (zone == null) return;
-            if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId)) return;
+
+            // Mine floor gate check: even if the Mine zone is unlocked, specific floors may be gated
+            if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId))
+            {
+                int mineFloor = ParseMineFloor(newLocationName);
+                if (mineFloor >= 0 && !stateManager.IsMineLevelAllowed(mineFloor))
+                {
+                    int required = stateManager.GetRequiredMiningLevelForFloor(mineFloor);
+                    int current = stateManager.GetCollectiveSkillLevel("Mining");
+                    Monitor.Log($"Blocked {Game1.player.Name} from mine floor {mineFloor} (need collective Mining {required}, have {current}).", LogLevel.Info);
+
+                    if (config.ShowBlockedMessage)
+                        Game1.addHUDMessage(new HUDMessage($"Floor {mineFloor} is gated! Need collective Mining level {required} (have {current}).", HUDMessage.error_type));
+
+                    isWarpingBack = true;
+                    warpBackFramesLeft = 3;
+                    Game1.warpFarmer(oldLocationName, lastSafeX, lastSafeY, false);
+                }
+                return;
+            }
 
             Monitor.Log($"Blocked {Game1.player.Name} from entering {newLocationName} (zone: {zone.ZoneId} is locked).", LogLevel.Info);
 
@@ -188,6 +207,14 @@ namespace ZoneLockChallenge
                 name == "Farm" || name == "FarmHouse" || name == "FarmCave" ||
                 name == "Cellar" || name == "Greenhouse" ||
                 name.StartsWith("Cellar") || name.StartsWith("Cabin"));
+
+        /// <summary>Parse mine floor number from location name (e.g. "UndergroundMine25" → 25). Returns -1 if not a mine floor.</summary>
+        private static int ParseMineFloor(string locationName)
+        {
+            if (locationName != null && locationName.StartsWith("UndergroundMine") && int.TryParse(locationName.AsSpan(15), out int floor))
+                return floor;
+            return -1;
+        }
 
         // ── Input: K for read-only, action button for plates + minecart signs ─
 
@@ -263,6 +290,29 @@ namespace ZoneLockChallenge
                     {
                         Game1.playSound("stoneStep");
                         Game1.warpFarmer(mc.MountainLocation, mc.MountainArrivalX, mc.MountainArrivalY, false);
+                        Helper.Input.Suppress(e.Button);
+                        return;
+                    }
+                }
+
+                // Check secondary beach bypass signs (configurable alternate route that avoids town)
+                if (config.SecondaryBeachBypass != null && config.SecondaryBeachBypass.Enabled
+                    && stateManager.IsZonePermanentlyUnlocked("Beach"))
+                {
+                    var sb = config.SecondaryBeachBypass;
+
+                    if (locName == sb.OtherLocation && tileX == sb.OtherSignX && tileY == sb.OtherSignY)
+                    {
+                        Game1.playSound("stoneStep");
+                        Game1.warpFarmer(sb.BeachLocation, sb.BeachArrivalX, sb.BeachArrivalY, false);
+                        Helper.Input.Suppress(e.Button);
+                        return;
+                    }
+
+                    if (locName == sb.BeachLocation && tileX == sb.BeachSignX && tileY == sb.BeachSignY)
+                    {
+                        Game1.playSound("stoneStep");
+                        Game1.warpFarmer(sb.OtherLocation, sb.OtherArrivalX, sb.OtherArrivalY, false);
                         Helper.Input.Suppress(e.Button);
                         return;
                     }
@@ -369,6 +419,19 @@ namespace ZoneLockChallenge
                 if (locName == mc.BeachLocation)
                     DrawSignSprite(b, mc.BeachSignX, mc.BeachSignY, "Mountain");
             }
+
+            // Draw secondary bypass signs if beach is unlocked
+            if (config.SecondaryBeachBypass != null && config.SecondaryBeachBypass.Enabled
+                && stateManager.IsZonePermanentlyUnlocked("Beach"))
+            {
+                var sb = config.SecondaryBeachBypass;
+
+                if (locName == sb.OtherLocation)
+                    DrawSignSprite(b, sb.OtherSignX, sb.OtherSignY, "Beach");
+
+                if (locName == sb.BeachLocation)
+                    DrawSignSprite(b, sb.BeachSignX, sb.BeachSignY, sb.OtherLocation);
+            }
         }
 
         private void DrawPlateSprite(SpriteBatch b, ZoneDefinition zone, PlateTile plate)
@@ -393,8 +456,8 @@ namespace ZoneLockChallenge
                 new Rectangle(331, 374, 15, 14),
                 tint, 0f, Vector2.Zero, 3f, SpriteEffects.None, 0.99f);
 
-            // Draw small label below
-            string label = !string.IsNullOrEmpty(zone.BundleName) ? zone.BundleName : zone.DisplayName;
+            // Draw small label below — use DisplayName so it matches the menu header
+            string label = !string.IsNullOrEmpty(zone.DisplayName) ? zone.DisplayName : zone.BundleName;
             Vector2 textSize = Game1.smallFont.MeasureString(label);
             float textScale = Math.Min(1f, 180f / textSize.X); // scale down long names
             Vector2 textPos = new(screenPos.X + 32 - textSize.X * textScale / 2, screenPos.Y + 40 + bounce);

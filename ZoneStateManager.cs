@@ -15,6 +15,10 @@ namespace ZoneLockChallenge
         public Dictionary<string, PlateTile> PlateOverrides { get; set; } = new();
         /// <summary>Host-managed zone config overrides (cost, items, rewards). Synced to all players.</summary>
         public Dictionary<string, ZoneConfigOverride> ZoneOverrides { get; set; } = new();
+        /// <summary>Host-managed zone display order (list of zoneIds). Empty = use config order.</summary>
+        public List<string> ZoneOrder { get; set; } = new();
+        /// <summary>Host-managed mine level gate overrides. Null = use config defaults.</summary>
+        public List<MineLevelGate> MineLevelGateOverrides { get; set; }
     }
 
     public class ZoneSyncMessage
@@ -23,6 +27,8 @@ namespace ZoneLockChallenge
         public Dictionary<string, Dictionary<long, int>> ActiveTickets { get; set; } = new();
         public Dictionary<string, PlateTile> PlateOverrides { get; set; } = new();
         public Dictionary<string, ZoneConfigOverride> ZoneOverrides { get; set; } = new();
+        public List<string> ZoneOrder { get; set; } = new();
+        public List<MineLevelGate> MineLevelGateOverrides { get; set; }
     }
 
     public class ZonePurchaseRequest
@@ -197,6 +203,40 @@ namespace ZoneLockChallenge
             }
         }
 
+        /// <summary>Get zones in the effective display order (save-data ZoneOrder first, then any config zones not yet in the order).</summary>
+        public List<ZoneDefinition> GetOrderedZones()
+        {
+            var result = new List<ZoneDefinition>();
+            var seen = new HashSet<string>();
+            foreach (var zoneId in State.ZoneOrder)
+            {
+                var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+                if (zone != null && seen.Add(zoneId))
+                    result.Add(zone);
+            }
+            foreach (var zone in config.Zones)
+                if (seen.Add(zone.ZoneId))
+                    result.Add(zone);
+            return result;
+        }
+
+        /// <summary>Move a zone up (-1) or down (+1) in the display order. Host only.</summary>
+        public bool MoveZoneInOrder(string zoneId, int delta)
+        {
+            if (!Context.IsMainPlayer || delta == 0) return false;
+            var ordered = GetOrderedZones().Select(z => z.ZoneId).ToList();
+            int idx = ordered.IndexOf(zoneId);
+            if (idx < 0) return false;
+            int newIdx = idx + delta;
+            if (newIdx < 0 || newIdx >= ordered.Count) return false;
+            ordered.RemoveAt(idx);
+            ordered.Insert(newIdx, zoneId);
+            State.ZoneOrder = ordered;
+            SaveState();
+            BroadcastState();
+            return true;
+        }
+
         /// <summary>Get the gold cost for a zone, scaled by number of already-unlocked zones.</summary>
         public int GetScaledMoneyCost(ZoneDefinition zone)
         {
@@ -206,6 +246,47 @@ namespace ZoneLockChallenge
             int unlockedCount = State.UnlockedZones.Count;
             double multiplier = 1.0 + (config.CostScalingPercent / 100.0) * unlockedCount;
             return (int)(baseCost * multiplier);
+        }
+
+        // ── Mine level gates ─────────────────────────────────────────
+
+        /// <summary>Get the effective mine level gates (overrides from save data, or config defaults).</summary>
+        public List<MineLevelGate> GetEffectiveMineLevelGates()
+        {
+            return State.MineLevelGateOverrides ?? config.MineLevelGates ?? new List<MineLevelGate>();
+        }
+
+        /// <summary>Set mine level gate overrides (host only). Saves and broadcasts.</summary>
+        public void SetMineLevelGateOverrides(List<MineLevelGate> gates)
+        {
+            State.MineLevelGateOverrides = gates?.Select(g => new MineLevelGate { FloorNumber = g.FloorNumber, RequiredMiningLevel = g.RequiredMiningLevel }).ToList();
+            if (Context.IsMainPlayer)
+            {
+                SaveState();
+                BroadcastState();
+            }
+        }
+
+        /// <summary>Check if a specific mine floor is allowed based on collective mining level.</summary>
+        public bool IsMineLevelAllowed(int floor)
+        {
+            var gates = GetEffectiveMineLevelGates();
+            int collectiveMining = GetCollectiveSkillLevel("Mining");
+            foreach (var gate in gates)
+                if (floor >= gate.FloorNumber && collectiveMining < gate.RequiredMiningLevel)
+                    return false;
+            return true;
+        }
+
+        /// <summary>Get the required mining level for a specific floor (the highest gate at or below this floor). Returns 0 if no gate applies.</summary>
+        public int GetRequiredMiningLevelForFloor(int floor)
+        {
+            var gates = GetEffectiveMineLevelGates();
+            int required = 0;
+            foreach (var gate in gates)
+                if (floor >= gate.FloorNumber && gate.RequiredMiningLevel > required)
+                    required = gate.RequiredMiningLevel;
+            return required;
         }
 
         public bool TryPurchase(string zoneId, Farmer buyer)
@@ -329,12 +410,15 @@ namespace ZoneLockChallenge
                     Rewards = kv.Value.Rewards?.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList()
                 };
             }
+            var mineGatesCopy = State.MineLevelGateOverrides?.Select(g => new MineLevelGate { FloorNumber = g.FloorNumber, RequiredMiningLevel = g.RequiredMiningLevel }).ToList();
             var message = new ZoneSyncMessage
             {
                 UnlockedZones = new HashSet<string>(State.UnlockedZones),
                 ActiveTickets = ticketsCopy,
                 PlateOverrides = plateOverridesCopy,
-                ZoneOverrides = zoneOverridesCopy
+                ZoneOverrides = zoneOverridesCopy,
+                ZoneOrder = new List<string>(State.ZoneOrder),
+                MineLevelGateOverrides = mineGatesCopy
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -374,6 +458,8 @@ namespace ZoneLockChallenge
                 State.ActiveTickets = sync.ActiveTickets;
                 State.PlateOverrides = sync.PlateOverrides ?? new Dictionary<string, PlateTile>();
                 State.ZoneOverrides = sync.ZoneOverrides ?? new Dictionary<string, ZoneConfigOverride>();
+                State.ZoneOrder = sync.ZoneOrder ?? new List<string>();
+                State.MineLevelGateOverrides = sync.MineLevelGateOverrides;
                 OnStateChanged?.Invoke();
             }
 

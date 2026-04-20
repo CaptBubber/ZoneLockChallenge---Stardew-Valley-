@@ -13,7 +13,8 @@ namespace ZoneLockChallenge
     public class ZoneEditMenu : IClickableMenu
     {
         private const int MenuWidth = 1000;
-        private const int MenuHeight = 780;
+        private const int MenuHeightNormal = 780;
+        private const int MenuHeightMine = 920;
         private const int Padding = 16;
         private const int RowHeight = 36;
         private const int InvCols = 12;
@@ -30,6 +31,12 @@ namespace ZoneLockChallenge
         private List<ItemCost> editItems;
         private List<ItemCost> editRewards;
         private bool addToRewards; // false = requirements mode, true = rewards mode
+
+        // Mine level gates (only for Mine zone)
+        private bool isMineZone;
+        private List<MineLevelGate> editMineGates;
+        private int mineGateScrollOffset;
+        private const int MaxVisibleMineGateRows = 3;
 
         // Text input for item ID
         private TextBox itemIdTextBox;
@@ -51,6 +58,10 @@ namespace ZoneLockChallenge
         private Rectangle addItemBtn;
         private Rectangle addCountMinus, addCountPlus;
 
+        // Mine gate buttons
+        private Rectangle addGateBtn;
+        private TextBox gateFloorTextBox;
+
         // Scroll for items/rewards if lists get long
         private int itemScrollOffset;
         private int rewardScrollOffset;
@@ -60,8 +71,8 @@ namespace ZoneLockChallenge
         public ZoneEditMenu(ZoneDefinition zone, ZoneStateManager stateManager)
             : base(
                 (Game1.uiViewport.Width - MenuWidth) / 2,
-                (Game1.uiViewport.Height - MenuHeight) / 2,
-                MenuWidth, MenuHeight, showUpperRightCloseButton: true)
+                (Game1.uiViewport.Height - (zone.ZoneId == "Mine" ? MenuHeightMine : MenuHeightNormal)) / 2,
+                MenuWidth, zone.ZoneId == "Mine" ? MenuHeightMine : MenuHeightNormal, showUpperRightCloseButton: true)
         {
             this.zone = zone;
             this.stateManager = stateManager;
@@ -75,6 +86,16 @@ namespace ZoneLockChallenge
                 .Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count })
                 .ToList();
 
+            // Mine level gates (only for the Mine zone)
+            isMineZone = zone.ZoneId == "Mine";
+            if (isMineZone)
+            {
+                editMineGates = stateManager.GetEffectiveMineLevelGates()
+                    .Select(g => new MineLevelGate { FloorNumber = g.FloorNumber, RequiredMiningLevel = g.RequiredMiningLevel })
+                    .OrderBy(g => g.FloorNumber)
+                    .ToList();
+            }
+
             // Cache all known items
             foreach (var item in editItems) CacheItem(item.ItemId);
             foreach (var item in editRewards) CacheItem(item.ItemId);
@@ -87,6 +108,17 @@ namespace ZoneLockChallenge
                 Width = 280,
                 Text = ""
             };
+
+            if (isMineZone)
+            {
+                gateFloorTextBox = new TextBox(
+                    Game1.content.Load<Texture2D>("LooseSprites\\textBox"),
+                    null, Game1.smallFont, Color.Black)
+                {
+                    Width = 120,
+                    Text = ""
+                };
+            }
 
             SetupLayout();
         }
@@ -141,6 +173,14 @@ namespace ZoneLockChallenge
             addCountPlus = new Rectangle(innerX + 720, modeY, 32, 32);
             addItemBtn = new Rectangle(innerX + 770, modeY, 80, 32);
 
+            // Mine gate add button layout (positioned dynamically in draw since it depends on scroll)
+            if (isMineZone)
+            {
+                gateFloorTextBox.X = innerX + 350;
+                gateFloorTextBox.Y = inventoryBounds.Y - 80;
+                addGateBtn = new Rectangle(innerX + 500, inventoryBounds.Y - 80, 80, 32);
+            }
+
             // Save/Cancel buttons
             int btnWidth = 160;
             int btnHeight = 48;
@@ -180,9 +220,10 @@ namespace ZoneLockChallenge
             if (new Rectangle(itemIdTextBox.X, itemIdTextBox.Y, itemIdTextBox.Width, 48).Contains(x, y))
             {
                 itemIdTextBox.Selected = true;
+                if (gateFloorTextBox != null) gateFloorTextBox.Selected = false;
                 Game1.keyboardDispatcher.Subscriber = itemIdTextBox;
             }
-            else
+            else if (gateFloorTextBox == null || !new Rectangle(gateFloorTextBox.X, gateFloorTextBox.Y, gateFloorTextBox.Width, 48).Contains(x, y))
             {
                 itemIdTextBox.Selected = false;
             }
@@ -192,6 +233,30 @@ namespace ZoneLockChallenge
 
             // Reward list row buttons
             if (HandleItemListClick(x, y, editRewards, GetRewardListY(), rewardScrollOffset, MaxVisibleRewardRows)) return;
+
+            // Mine gate row buttons
+            if (isMineZone && HandleMineGateClick(x, y)) return;
+
+            // Mine gate: floor text box and add button
+            if (isMineZone)
+            {
+                if (new Rectangle(gateFloorTextBox.X, gateFloorTextBox.Y, gateFloorTextBox.Width, 48).Contains(x, y))
+                {
+                    gateFloorTextBox.Selected = true;
+                    itemIdTextBox.Selected = false;
+                    Game1.keyboardDispatcher.Subscriber = gateFloorTextBox;
+                }
+                else if (!new Rectangle(itemIdTextBox.X, itemIdTextBox.Y, itemIdTextBox.Width, 48).Contains(x, y))
+                {
+                    gateFloorTextBox.Selected = false;
+                }
+
+                if (addGateBtn.Contains(x, y))
+                {
+                    TryAddMineGate();
+                    return;
+                }
+            }
 
             // Inventory grid click
             var clickedItem = GetClickedInventoryItem(x, y);
@@ -242,23 +307,32 @@ namespace ZoneLockChallenge
                 if (direction > 0 && rewardScrollOffset > 0) rewardScrollOffset--;
                 else if (direction < 0 && rewardScrollOffset < editRewards.Count - MaxVisibleRewardRows) rewardScrollOffset++;
             }
+
+            if (isMineZone)
+            {
+                int gateListY = GetMineGateListY();
+                int gateListHeight = MaxVisibleMineGateRows * RowHeight;
+                if (new Rectangle(innerX, gateListY, innerWidth, gateListHeight + 28).Contains(mouseX, mouseY))
+                {
+                    if (direction > 0 && mineGateScrollOffset > 0) mineGateScrollOffset--;
+                    else if (direction < 0 && mineGateScrollOffset < editMineGates.Count - MaxVisibleMineGateRows) mineGateScrollOffset++;
+                }
+            }
         }
 
         public override void receiveKeyPress(Keys key)
         {
             if (itemIdTextBox.Selected)
             {
-                // Don't close menu while typing
-                if (key == Keys.Escape)
-                {
-                    itemIdTextBox.Selected = false;
-                    return;
-                }
-                if (key == Keys.Enter)
-                {
-                    TryAddItemFromTextBox();
-                    return;
-                }
+                if (key == Keys.Escape) { itemIdTextBox.Selected = false; return; }
+                if (key == Keys.Enter) { TryAddItemFromTextBox(); return; }
+                return;
+            }
+
+            if (gateFloorTextBox != null && gateFloorTextBox.Selected)
+            {
+                if (key == Keys.Escape) { gateFloorTextBox.Selected = false; return; }
+                if (key == Keys.Enter) { TryAddMineGate(); return; }
                 return;
             }
 
@@ -271,6 +345,7 @@ namespace ZoneLockChallenge
 
         private int GetItemListY() => innerY + 48 + 28 + 36 + 12; // after title + gold cost + gold buttons + margin
         private int GetRewardListY() => GetItemListY() + 28 + Math.Min(editItems.Count, MaxVisibleItemRows) * RowHeight + 20;
+        private int GetMineGateListY() => GetRewardListY() + 28 + Math.Min(editRewards.Count, MaxVisibleRewardRows) * RowHeight + 20;
 
         private void TryAddItemFromTextBox()
         {
@@ -377,6 +452,53 @@ namespace ZoneLockChallenge
             return null;
         }
 
+        private bool HandleMineGateClick(int x, int y)
+        {
+            int startY = GetMineGateListY() + 28;
+            for (int i = 0; i < MaxVisibleMineGateRows && i + mineGateScrollOffset < editMineGates.Count; i++)
+            {
+                int rowY = startY + i * RowHeight;
+                int idx = i + mineGateScrollOffset;
+                int btnBaseX = innerX + innerWidth - 220;
+
+                // -5 level
+                if (new Rectangle(btnBaseX, rowY, 36, 28).Contains(x, y))
+                { editMineGates[idx].RequiredMiningLevel = Math.Max(0, editMineGates[idx].RequiredMiningLevel - 5); Game1.playSound("smallSelect"); return true; }
+                // -1 level
+                if (new Rectangle(btnBaseX + 40, rowY, 28, 28).Contains(x, y))
+                { editMineGates[idx].RequiredMiningLevel = Math.Max(0, editMineGates[idx].RequiredMiningLevel - 1); Game1.playSound("smallSelect"); return true; }
+                // +1 level
+                if (new Rectangle(btnBaseX + 72, rowY, 28, 28).Contains(x, y))
+                { editMineGates[idx].RequiredMiningLevel++; Game1.playSound("smallSelect"); return true; }
+                // +5 level
+                if (new Rectangle(btnBaseX + 104, rowY, 36, 28).Contains(x, y))
+                { editMineGates[idx].RequiredMiningLevel += 5; Game1.playSound("smallSelect"); return true; }
+                // Remove gate
+                if (new Rectangle(btnBaseX + 152, rowY, 56, 28).Contains(x, y))
+                { editMineGates.RemoveAt(idx); Game1.playSound("trashcan"); return true; }
+            }
+            return false;
+        }
+
+        private void TryAddMineGate()
+        {
+            string text = gateFloorTextBox.Text.Trim();
+            if (!int.TryParse(text, out int floor) || floor <= 0)
+            {
+                Game1.playSound("cancel");
+                return;
+            }
+            if (editMineGates.Any(g => g.FloorNumber == floor))
+            {
+                Game1.playSound("cancel");
+                return;
+            }
+            editMineGates.Add(new MineLevelGate { FloorNumber = floor, RequiredMiningLevel = 1 });
+            editMineGates = editMineGates.OrderBy(g => g.FloorNumber).ToList();
+            gateFloorTextBox.Text = "";
+            Game1.playSound("smallSelect");
+        }
+
         private void SaveChanges()
         {
             var zoneOverride = new ZoneConfigOverride
@@ -386,6 +508,9 @@ namespace ZoneLockChallenge
                 Rewards = editRewards.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList()
             };
             stateManager.SetZoneOverride(zone.ZoneId, zoneOverride);
+
+            if (isMineZone)
+                stateManager.SetMineLevelGateOverrides(editMineGates);
         }
 
         // ── Drawing ──────────────────────────────────────────────────
@@ -432,6 +557,27 @@ namespace ZoneLockChallenge
             {
                 string scrollHint = $"({rewardScrollOffset + 1}-{Math.Min(rewardScrollOffset + MaxVisibleRewardRows, editRewards.Count)} of {editRewards.Count})";
                 b.DrawString(Game1.smallFont, scrollHint, new Vector2(innerX + 100, rewardListY), Color.Gray);
+            }
+
+            // ── Mine Level Gates (Mine zone only) ──
+            if (isMineZone)
+            {
+                int gateListY = GetMineGateListY();
+                int collectiveMining = stateManager.GetCollectiveSkillLevel("Mining");
+                b.DrawString(Game1.smallFont, $"Mine Level Gates (collective Mining: {collectiveMining}):", new Vector2(innerX, gateListY), Color.DarkSlateBlue);
+
+                if (editMineGates.Count > MaxVisibleMineGateRows)
+                {
+                    string scrollHint = $"({mineGateScrollOffset + 1}-{Math.Min(mineGateScrollOffset + MaxVisibleMineGateRows, editMineGates.Count)} of {editMineGates.Count})";
+                    b.DrawString(Game1.smallFont, scrollHint, new Vector2(innerX + 420, gateListY), Color.Gray);
+                }
+
+                DrawMineGateList(b, gateListY + 28);
+
+                // "Add gate" input row
+                b.DrawString(Game1.smallFont, "Add floor:", new Vector2(innerX, gateFloorTextBox.Y + 4), Color.DarkSlateGray);
+                gateFloorTextBox.Draw(b);
+                DrawSmallButton(b, addGateBtn, "Add");
             }
 
             // ── Mode toggle + Item ID input ──
@@ -492,6 +638,35 @@ namespace ZoneLockChallenge
                 DrawSmallButton(b, new Rectangle(btnBaseX + 40, rowY, 28, 28), "-1");
                 DrawSmallButton(b, new Rectangle(btnBaseX + 72, rowY, 28, 28), "+1");
                 DrawSmallButton(b, new Rectangle(btnBaseX + 104, rowY, 36, 28), "+10");
+                DrawSmallButton(b, new Rectangle(btnBaseX + 152, rowY, 56, 28), "X", Color.IndianRed);
+            }
+        }
+
+        private void DrawMineGateList(SpriteBatch b, int startY)
+        {
+            if (editMineGates.Count == 0)
+            {
+                b.DrawString(Game1.smallFont, "(no gates — all floors accessible)", new Vector2(innerX + 8, startY), Color.Gray);
+                return;
+            }
+
+            int collectiveMining = stateManager.GetCollectiveSkillLevel("Mining");
+            for (int i = 0; i < MaxVisibleMineGateRows && i + mineGateScrollOffset < editMineGates.Count; i++)
+            {
+                var gate = editMineGates[i + mineGateScrollOffset];
+                int rowY = startY + i * RowHeight;
+
+                bool met = collectiveMining >= gate.RequiredMiningLevel;
+                Color textColor = met ? Color.DarkGreen : Color.DarkRed;
+                string check = met ? "\u2713 " : "";
+                b.DrawString(Game1.smallFont, $"{check}Floor {gate.FloorNumber}: Mining Lv {gate.RequiredMiningLevel}",
+                    new Vector2(innerX + 8, rowY), textColor);
+
+                int btnBaseX = innerX + innerWidth - 220;
+                DrawSmallButton(b, new Rectangle(btnBaseX, rowY, 36, 28), "-5");
+                DrawSmallButton(b, new Rectangle(btnBaseX + 40, rowY, 28, 28), "-1");
+                DrawSmallButton(b, new Rectangle(btnBaseX + 72, rowY, 28, 28), "+1");
+                DrawSmallButton(b, new Rectangle(btnBaseX + 104, rowY, 36, 28), "+5");
                 DrawSmallButton(b, new Rectangle(btnBaseX + 152, rowY, 56, 28), "X", Color.IndianRed);
             }
         }

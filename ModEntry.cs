@@ -267,6 +267,29 @@ namespace ZoneLockChallenge
                         return;
                     }
                 }
+
+                // Check secondary beach bypass signs (configurable alternate route that avoids town)
+                if (config.SecondaryBeachBypass != null && config.SecondaryBeachBypass.Enabled
+                    && stateManager.IsZonePermanentlyUnlocked("Beach"))
+                {
+                    var sb = config.SecondaryBeachBypass;
+
+                    if (locName == sb.OtherLocation && tileX == sb.OtherSignX && tileY == sb.OtherSignY)
+                    {
+                        Game1.playSound("stoneStep");
+                        Game1.warpFarmer(sb.BeachLocation, sb.BeachArrivalX, sb.BeachArrivalY, false);
+                        Helper.Input.Suppress(e.Button);
+                        return;
+                    }
+
+                    if (locName == sb.BeachLocation && tileX == sb.BeachSignX && tileY == sb.BeachSignY)
+                    {
+                        Game1.playSound("stoneStep");
+                        Game1.warpFarmer(sb.OtherLocation, sb.OtherArrivalX, sb.OtherArrivalY, false);
+                        Helper.Input.Suppress(e.Button);
+                        return;
+                    }
+                }
             }
 
             // K key: open read-only overview
@@ -369,6 +392,19 @@ namespace ZoneLockChallenge
                 if (locName == mc.BeachLocation)
                     DrawSignSprite(b, mc.BeachSignX, mc.BeachSignY, "Mountain");
             }
+
+            // Draw secondary bypass signs if beach is unlocked
+            if (config.SecondaryBeachBypass != null && config.SecondaryBeachBypass.Enabled
+                && stateManager.IsZonePermanentlyUnlocked("Beach"))
+            {
+                var sb = config.SecondaryBeachBypass;
+
+                if (locName == sb.OtherLocation)
+                    DrawSignSprite(b, sb.OtherSignX, sb.OtherSignY, "Beach");
+
+                if (locName == sb.BeachLocation)
+                    DrawSignSprite(b, sb.BeachSignX, sb.BeachSignY, sb.OtherLocation);
+            }
         }
 
         private void DrawPlateSprite(SpriteBatch b, ZoneDefinition zone, PlateTile plate)
@@ -393,8 +429,8 @@ namespace ZoneLockChallenge
                 new Rectangle(331, 374, 15, 14),
                 tint, 0f, Vector2.Zero, 3f, SpriteEffects.None, 0.99f);
 
-            // Draw small label below
-            string label = !string.IsNullOrEmpty(zone.BundleName) ? zone.BundleName : zone.DisplayName;
+            // Draw small label below — use DisplayName so it matches the menu header
+            string label = !string.IsNullOrEmpty(zone.DisplayName) ? zone.DisplayName : zone.BundleName;
             Vector2 textSize = Game1.smallFont.MeasureString(label);
             float textScale = Math.Min(1f, 180f / textSize.X); // scale down long names
             Vector2 textPos = new(screenPos.X + 32 - textSize.X * textScale / 2, screenPos.Y + 40 + bounce);

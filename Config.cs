@@ -12,6 +12,9 @@ namespace ZoneLockChallenge
 
         public MinecartConfig BeachMinecart { get; set; } = new();
 
+        /// <summary>Secondary optional beach bypass. Lets hosts add a second travel sign between the beach and any other location, unlocked once the Beach zone is purchased.</summary>
+        public BypassWarpConfig SecondaryBeachBypass { get; set; } = new();
+
         public List<ZoneDefinition> Zones { get; set; } = new()
         {
             new ZoneDefinition
@@ -161,5 +164,21 @@ namespace ZoneLockChallenge
         public int BeachSignY { get; set; } = 4;
         public int MountainArrivalX { get; set; } = 125;
         public int MountainArrivalY { get; set; } = 12;
+    }
+
+    /// <summary>Generic two-sign bypass warp, unlocked once the Beach zone is purchased.</summary>
+    public class BypassWarpConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string BeachLocation { get; set; } = "Beach";
+        public int BeachSignX { get; set; } = 4;
+        public int BeachSignY { get; set; } = 4;
+        public int BeachArrivalX { get; set; } = 4;
+        public int BeachArrivalY { get; set; } = 4;
+        public string OtherLocation { get; set; } = "Backwoods";
+        public int OtherSignX { get; set; } = 10;
+        public int OtherSignY { get; set; } = 10;
+        public int OtherArrivalX { get; set; } = 10;
+        public int OtherArrivalY { get; set; } = 10;
     }
 }

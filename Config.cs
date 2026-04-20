@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ZoneLockChallenge
 {
@@ -6,6 +7,9 @@ namespace ZoneLockChallenge
     {
         public string OpenMenuKey { get; set; } = "K";
         public bool ShowBlockedMessage { get; set; } = true;
+
+        /// <summary>When true, NPC friendship points never decrease overnight (prevents daily decay from not talking to NPCs).</summary>
+        public bool PreventFriendshipDecay { get; set; } = true;
 
         /// <summary>Extra percentage added to zone gold cost per already-unlocked zone. 0 = no scaling.</summary>
         public int CostScalingPercent { get; set; } = 10;
@@ -23,6 +27,9 @@ namespace ZoneLockChallenge
             new MineLevelGate { FloorNumber = 75, RequiredMiningLevel = 8 },
             new MineLevelGate { FloorNumber = 100, RequiredMiningLevel = 10 }
         };
+
+        public ZoneDefinition GetZoneById(string zoneId) =>
+            Zones.FirstOrDefault(z => z.ZoneId == zoneId);
 
         public List<ZoneDefinition> Zones { get; set; } = new()
         {

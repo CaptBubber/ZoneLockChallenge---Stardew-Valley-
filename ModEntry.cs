@@ -27,6 +27,9 @@ namespace ZoneLockChallenge
         // Plate repositioning mode
         private string platePlacementZoneId;
 
+        // Friendship decay prevention: snapshot taken on DayEnding, restored on DayStarted
+        private Dictionary<string, int> friendshipSnapshot = new();
+
         public override void Entry(IModHelper helper)
         {
             config = helper.ReadConfig<ModConfig>();
@@ -38,6 +41,7 @@ namespace ZoneLockChallenge
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
             helper.Events.GameLoop.Saving += OnSaving;
             helper.Events.GameLoop.DayStarted += OnDayStarted;
+            helper.Events.GameLoop.DayEnding += OnDayEnding;
             helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
             helper.Events.Player.Warped += OnPlayerWarped;
             helper.Events.Input.ButtonPressed += OnButtonPressed;
@@ -66,20 +70,47 @@ namespace ZoneLockChallenge
 
         private void OnDayStarted(object sender, DayStartedEventArgs e)
         {
-            // FIX: Only show "ticket expired" for zones that actually had a ticket yesterday
-            var expired = stateManager.CleanupExpiredTickets();
-            if (Context.IsMainPlayer)
+            var expired = Context.IsMainPlayer
+                ? stateManager.CleanupExpiredTickets()
+                : stateManager.GetLocalExpiredTicketZones();
+            foreach (var zoneId in expired)
             {
-                foreach (var zoneId in expired)
+                var zone = config.GetZoneById(zoneId);
+                if (zone != null)
+                    Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
+            }
+
+            // Restore friendship points that decreased overnight (prevents daily decay)
+            if (config.PreventFriendshipDecay && friendshipSnapshot.Count > 0)
+            {
+                int restored = 0;
+                foreach (var kvp in friendshipSnapshot)
                 {
-                    var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
-                    if (zone != null)
-                        Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
+                    if (Game1.player.friendshipData.ContainsKey(kvp.Key))
+                    {
+                        var friendship = Game1.player.friendshipData[kvp.Key];
+                        if (friendship.Points < kvp.Value)
+                        {
+                            friendship.Points = kvp.Value;
+                            restored++;
+                        }
+                    }
                 }
+                if (restored > 0)
+                    Monitor.Log($"Restored friendship decay for {restored} NPC(s).", LogLevel.Trace);
+                friendshipSnapshot.Clear();
             }
         }
 
-        private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e) { isWarpingBack = false; warpBackFramesLeft = 0; }
+        private void OnDayEnding(object sender, DayEndingEventArgs e)
+        {
+            if (!config.PreventFriendshipDecay) return;
+            friendshipSnapshot.Clear();
+            foreach (var kvp in Game1.player.friendshipData.Pairs)
+                friendshipSnapshot[kvp.Key] = kvp.Value.Points;
+        }
+
+        private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e) { isWarpingBack = false; warpBackFramesLeft = 0; friendshipSnapshot.Clear(); }
 
         private void OnPeerConnected(object sender, PeerConnectedEventArgs e)
         {
@@ -233,7 +264,7 @@ namespace ZoneLockChallenge
                 // Plate placement mode: place the plate at the clicked tile
                 if (platePlacementZoneId != null)
                 {
-                    var zone = config.Zones.FirstOrDefault(z => z.ZoneId == platePlacementZoneId);
+                    var zone = config.GetZoneById(platePlacementZoneId);
                     if (zone != null)
                     {
                         var newPlate = new PlateTile { LocationName = locName, X = tileX, Y = tileY };
@@ -327,6 +358,7 @@ namespace ZoneLockChallenge
                     onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null,
                     onRequestZoneEdit: Context.IsMainPlayer ? RequestZoneEdit : null);
                 Game1.playSound("bigSelect");
+                Helper.Input.Suppress(e.Button);
             }
         }
 
@@ -353,6 +385,12 @@ namespace ZoneLockChallenge
                 return;
             }
 
+            if (!Context.IsMainPlayer)
+            {
+                Monitor.Log("Only the host can move plates.", LogLevel.Warn);
+                return;
+            }
+
             string zoneId = args[0];
             var targetZone = config.Zones.FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
             if (targetZone == null)
@@ -369,7 +407,7 @@ namespace ZoneLockChallenge
         /// <summary>Called by BundleMenu to open the zone edit menu (host only).</summary>
         private void RequestZoneEdit(string zoneId)
         {
-            var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+            var zone = config.GetZoneById(zoneId);
             if (zone == null) return;
             Game1.activeClickableMenu = new ZoneEditMenu(zone, stateManager);
             Monitor.Log($"Opened zone editor for '{zone.ZoneId}'.", LogLevel.Info);
@@ -379,7 +417,7 @@ namespace ZoneLockChallenge
         private void RequestPlatePlacement(string zoneId)
         {
             platePlacementZoneId = zoneId;
-            var zone = config.Zones.FirstOrDefault(z => z.ZoneId == zoneId);
+            var zone = config.GetZoneById(zoneId);
             string name = zone?.DisplayName ?? zoneId;
             Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{name}' plate.", HUDMessage.newQuest_type));
             Monitor.Log($"Plate placement mode active for '{zoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);

@@ -133,7 +133,26 @@ namespace ZoneLockChallenge
             long farmerId = Game1.player.UniqueMultiplayerID;
             var zone = stateManager.GetZoneForLocation(newLocationName);
             if (zone == null) return;
-            if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId)) return;
+
+            // Mine floor gate check: even if the Mine zone is unlocked, specific floors may be gated
+            if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId))
+            {
+                int mineFloor = ParseMineFloor(newLocationName);
+                if (mineFloor >= 0 && !stateManager.IsMineLevelAllowed(mineFloor))
+                {
+                    int required = stateManager.GetRequiredMiningLevelForFloor(mineFloor);
+                    int current = stateManager.GetCollectiveSkillLevel("Mining");
+                    Monitor.Log($"Blocked {Game1.player.Name} from mine floor {mineFloor} (need collective Mining {required}, have {current}).", LogLevel.Info);
+
+                    if (config.ShowBlockedMessage)
+                        Game1.addHUDMessage(new HUDMessage($"Floor {mineFloor} is gated! Need collective Mining level {required} (have {current}).", HUDMessage.error_type));
+
+                    isWarpingBack = true;
+                    warpBackFramesLeft = 3;
+                    Game1.warpFarmer(oldLocationName, lastSafeX, lastSafeY, false);
+                }
+                return;
+            }
 
             Monitor.Log($"Blocked {Game1.player.Name} from entering {newLocationName} (zone: {zone.ZoneId} is locked).", LogLevel.Info);
 
@@ -188,6 +207,14 @@ namespace ZoneLockChallenge
                 name == "Farm" || name == "FarmHouse" || name == "FarmCave" ||
                 name == "Cellar" || name == "Greenhouse" ||
                 name.StartsWith("Cellar") || name.StartsWith("Cabin"));
+
+        /// <summary>Parse mine floor number from location name (e.g. "UndergroundMine25" → 25). Returns -1 if not a mine floor.</summary>
+        private static int ParseMineFloor(string locationName)
+        {
+            if (locationName != null && locationName.StartsWith("UndergroundMine") && int.TryParse(locationName.AsSpan(15), out int floor))
+                return floor;
+            return -1;
+        }
 
         // ── Input: K for read-only, action button for plates + minecart signs ─
 

@@ -514,7 +514,28 @@ namespace ZoneLockChallenge
                 y += 32;
             }
 
-            // Status — FIX: ticket active text is now green instead of yellow
+            // Mine level gates (Mine zone only)
+            if (zone.ZoneId == "Mine")
+            {
+                var gates = stateManager.GetEffectiveMineLevelGates();
+                if (gates.Count > 0)
+                {
+                    int collectiveMining = stateManager.GetCollectiveSkillLevel("Mining");
+                    b.DrawString(Game1.smallFont, "Mine Floor Gates:", new Vector2(x, y), Color.Black);
+                    y += 26;
+                    foreach (var gate in gates.OrderBy(g => g.FloorNumber))
+                    {
+                        bool met = collectiveMining >= gate.RequiredMiningLevel;
+                        string check = met ? "\u2713 " : "";
+                        b.DrawString(Game1.smallFont, $"{check}Floor {gate.FloorNumber}: Mining Lv {gate.RequiredMiningLevel}",
+                            new Vector2(x + 8, y), met ? Color.DarkGreen : Color.DarkRed);
+                        y += 24;
+                    }
+                    y += 4;
+                }
+            }
+
+            // Status
             y += 8;
             string status; Color statusColor;
             if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))

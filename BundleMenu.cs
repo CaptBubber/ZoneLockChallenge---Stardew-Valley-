@@ -383,13 +383,6 @@ namespace ZoneLockChallenge
                 Color nameColor = isSelected ? Color.Black : (isAccessible ? Color.DarkGreen : Color.DarkRed);
                 b.DrawString(Game1.smallFont, zone.DisplayName, new Vector2(slot.bounds.X + 40, slot.bounds.Y + (ZoneRowHeight - 28) / 2), nameColor);
 
-                if (zone.UnlockType == "ticket")
-                {
-                    string tag = "[TICKET]";
-                    Vector2 tagSize = Game1.smallFont.MeasureString(tag);
-                    b.DrawString(Game1.smallFont, tag, new Vector2(slot.bounds.Right - tagSize.X - 4, slot.bounds.Y + (ZoneRowHeight - 28) / 2), Color.DarkGoldenrod);
-                }
-
                 // Host-only reorder buttons on the right edge
                 if (i < reorderUpButtons.Count)
                 {

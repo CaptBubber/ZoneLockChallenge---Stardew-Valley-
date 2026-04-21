@@ -142,10 +142,10 @@ namespace ZoneLockChallenge
                 Game1.mouseCursors, new Rectangle(421, 472, 11, 12), 4f);
 
             int btnWidth = 260;
-            int btnX = rightPanelRect.X + (rightPanelRect.Width - btnWidth) / 2;
+            int purchaseBtnX = rightPanelRect.X + (rightPanelRect.Width - btnWidth) / 2;
             int btnY = rightPanelRect.Bottom - ButtonHeight - Padding;
             purchaseButton = new ClickableTextureComponent(
-                new Rectangle(btnX, btnY, btnWidth, ButtonHeight),
+                new Rectangle(purchaseBtnX, btnY, btnWidth, ButtonHeight),
                 Game1.mouseCursors, new Rectangle(256, 256, 10, 10), 4f);
         }
 

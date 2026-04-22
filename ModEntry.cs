@@ -293,10 +293,10 @@ namespace ZoneLockChallenge
                         return;
                     }
 
-                    // Open purchase menu focused on this zone
                     Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: true, focusZoneId: zone.ZoneId,
                         onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null,
-                        onRequestZoneEdit: Context.IsMainPlayer ? RequestZoneEdit : null);
+                        onRequestZoneEdit: Context.IsMainPlayer ? RequestZoneEdit : null,
+                        onRequestBundleEdit: Context.IsMainPlayer ? RequestBundleEdit : null);
                     Game1.playSound("bigSelect");
                     Helper.Input.Suppress(e.Button);
                     return;
@@ -356,7 +356,8 @@ namespace ZoneLockChallenge
             {
                 Game1.activeClickableMenu = new BundleMenu(config, stateManager, purchaseEnabled: false,
                     onRequestPlatePlacement: Context.IsMainPlayer ? RequestPlatePlacement : null,
-                    onRequestZoneEdit: Context.IsMainPlayer ? RequestZoneEdit : null);
+                    onRequestZoneEdit: Context.IsMainPlayer ? RequestZoneEdit : null,
+                    onRequestBundleEdit: Context.IsMainPlayer ? RequestBundleEdit : null);
                 Game1.playSound("bigSelect");
                 Helper.Input.Suppress(e.Button);
             }
@@ -411,6 +412,13 @@ namespace ZoneLockChallenge
             if (zone == null) return;
             Game1.activeClickableMenu = new ZoneEditMenu(zone, stateManager);
             Monitor.Log($"Opened zone editor for '{zone.ZoneId}'.", LogLevel.Info);
+        }
+
+        /// <summary>Called by BundleMenu to open the custom bundle editor (host only). Null = create new.</summary>
+        private void RequestBundleEdit(string bundleId)
+        {
+            Game1.activeClickableMenu = new CustomBundleEditMenu(stateManager, bundleId);
+            Monitor.Log($"Opened custom bundle editor{(bundleId != null ? $" for '{bundleId}'" : " (new)")}.", LogLevel.Info);
         }
 
         /// <summary>Called by BundleMenu to enter plate placement mode for a zone.</summary>

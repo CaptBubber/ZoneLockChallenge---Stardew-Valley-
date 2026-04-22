@@ -19,6 +19,7 @@ namespace ZoneLockChallenge
         public List<string> ZoneOrder { get; set; } = new();
         /// <summary>Host-managed mine level gate overrides. Null = use config defaults.</summary>
         public List<MineLevelGate> MineLevelGateOverrides { get; set; }
+        public List<CustomBundle> CustomBundles { get; set; } = new();
     }
 
     public class ZoneSyncMessage
@@ -29,6 +30,7 @@ namespace ZoneLockChallenge
         public Dictionary<string, ZoneConfigOverride> ZoneOverrides { get; set; } = new();
         public List<string> ZoneOrder { get; set; } = new();
         public List<MineLevelGate> MineLevelGateOverrides { get; set; }
+        public List<CustomBundle> CustomBundles { get; set; } = new();
     }
 
     public class ZonePurchaseRequest
@@ -51,6 +53,8 @@ namespace ZoneLockChallenge
         private const string SyncMessageType = "ZoneLockChallenge_Sync";
         private const string PurchaseRequestType = "ZoneLockChallenge_PurchaseReq";
         private const string PurchaseResponseType = "ZoneLockChallenge_PurchaseResp";
+        private const string BundlePurchaseRequestType = "ZoneLockChallenge_BundlePurchaseReq";
+        private const string BundlePurchaseResponseType = "ZoneLockChallenge_BundlePurchaseResp";
 
         private readonly IModHelper helper;
         private readonly IMonitor monitor;
@@ -283,6 +287,88 @@ namespace ZoneLockChallenge
             return required;
         }
 
+        // ── Custom bundles ───────────────────────────────────────────
+
+        public List<CustomBundle> GetCustomBundles() => State.CustomBundles;
+
+        public void AddCustomBundle(CustomBundle bundle)
+        {
+            if (!Context.IsMainPlayer) return;
+            State.CustomBundles.Add(bundle);
+            SaveAndBroadcast();
+        }
+
+        public void UpdateCustomBundle(CustomBundle updated)
+        {
+            if (!Context.IsMainPlayer) return;
+            int idx = State.CustomBundles.FindIndex(b => b.BundleId == updated.BundleId);
+            if (idx >= 0) State.CustomBundles[idx] = updated;
+            SaveAndBroadcast();
+        }
+
+        public void RemoveCustomBundle(string bundleId)
+        {
+            if (!Context.IsMainPlayer) return;
+            State.CustomBundles.RemoveAll(b => b.BundleId == bundleId);
+            SaveAndBroadcast();
+        }
+
+        public bool TryPurchaseBundle(string bundleId, Farmer buyer)
+        {
+            if (Context.IsMainPlayer)
+                return ExecuteBundlePurchase(bundleId, buyer, out _);
+
+            var request = new ZonePurchaseRequest { ZoneId = bundleId, FarmerId = buyer.UniqueMultiplayerID };
+            helper.Multiplayer.SendMessage(request, BundlePurchaseRequestType, modIDs: new[] { helper.ModRegistry.ModID });
+            return false;
+        }
+
+        private bool ExecuteBundlePurchase(string bundleId, Farmer buyer, out int cost)
+        {
+            cost = 0;
+            var bundle = State.CustomBundles.FirstOrDefault(b => b.BundleId == bundleId);
+            if (bundle == null || bundle.IsCompleted) return false;
+
+            cost = bundle.MoneyCost;
+            if (buyer.Money < cost) return false;
+            foreach (var item in bundle.Items)
+                if (CountItemInInventory(buyer, item.ItemId) < item.Count) return false;
+
+            bool isLocalBuyer = (buyer.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID);
+            if (isLocalBuyer)
+            {
+                buyer.Money -= cost;
+                foreach (var item in bundle.Items)
+                    RemoveItemsFromInventory(buyer, item.ItemId, item.Count);
+                GiveBundleRewards(bundle);
+            }
+
+            bundle.IsCompleted = true;
+            monitor.Log($"Custom bundle '{bundleId}' completed by {buyer.Name}.", LogLevel.Info);
+            SaveAndBroadcast();
+            OnStateChanged?.Invoke();
+            return true;
+        }
+
+        private void GiveBundleRewards(CustomBundle bundle)
+        {
+            foreach (var reward in bundle.Rewards)
+            {
+                try
+                {
+                    var item = ItemRegistry.Create(reward.ItemId, reward.Count);
+                    if (item != null)
+                    {
+                        if (!Game1.player.addItemToInventoryBool(item))
+                            Game1.createItemDebris(item, Game1.player.getStandingPosition(), -1);
+                    }
+                }
+                catch { monitor.Log($"Failed to create bundle reward '{reward.ItemId}'.", LogLevel.Warn); }
+            }
+        }
+
+        // ── Zone purchases ──────────────────────────────────────────
+
         public bool TryPurchase(string zoneId, Farmer buyer)
         {
             if (Context.IsMainPlayer)
@@ -406,6 +492,14 @@ namespace ZoneLockChallenge
                 };
             }
             var mineGatesCopy = State.MineLevelGateOverrides?.Select(g => new MineLevelGate { FloorNumber = g.FloorNumber, RequiredMiningLevel = g.RequiredMiningLevel }).ToList();
+            var bundlesCopy = State.CustomBundles.Select(cb => new CustomBundle
+            {
+                BundleId = cb.BundleId, DisplayName = cb.DisplayName, Description = cb.Description,
+                MoneyCost = cb.MoneyCost, IsCompleted = cb.IsCompleted,
+                Items = cb.Items?.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList() ?? new(),
+                Rewards = cb.Rewards?.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList() ?? new(),
+                Plate = cb.Plate != null ? new PlateTile { LocationName = cb.Plate.LocationName, X = cb.Plate.X, Y = cb.Plate.Y } : null
+            }).ToList();
             var message = new ZoneSyncMessage
             {
                 UnlockedZones = new HashSet<string>(State.UnlockedZones),
@@ -413,7 +507,8 @@ namespace ZoneLockChallenge
                 PlateOverrides = plateOverridesCopy,
                 ZoneOverrides = zoneOverridesCopy,
                 ZoneOrder = new List<string>(State.ZoneOrder),
-                MineLevelGateOverrides = mineGatesCopy
+                MineLevelGateOverrides = mineGatesCopy,
+                CustomBundles = bundlesCopy
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -456,6 +551,7 @@ namespace ZoneLockChallenge
                 State.ZoneOverrides = sync.ZoneOverrides ?? new Dictionary<string, ZoneConfigOverride>();
                 State.ZoneOrder = sync.ZoneOrder ?? new List<string>();
                 State.MineLevelGateOverrides = sync.MineLevelGateOverrides;
+                State.CustomBundles = sync.CustomBundles ?? new List<CustomBundle>();
                 OnStateChanged?.Invoke();
             }
 
@@ -477,6 +573,40 @@ namespace ZoneLockChallenge
                     }
                 }
 
+                OnPurchaseResponse?.Invoke(response);
+            }
+
+            if (e.Type == BundlePurchaseRequestType && Context.IsMainPlayer)
+            {
+                var request = e.ReadAs<ZonePurchaseRequest>();
+                var buyer = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
+                if (buyer != null)
+                {
+                    bool success = ExecuteBundlePurchase(request.ZoneId, buyer, out int cost);
+                    var response = new ZonePurchaseResponse
+                    {
+                        ZoneId = request.ZoneId, Success = success, ScaledCost = success ? cost : 0,
+                        Message = success ? "Bundle completed!" : "Cannot complete bundle. Check your funds and inventory."
+                    };
+                    helper.Multiplayer.SendMessage(response, BundlePurchaseResponseType,
+                        modIDs: new[] { helper.ModRegistry.ModID }, playerIDs: new[] { request.FarmerId });
+                }
+            }
+
+            if (e.Type == BundlePurchaseResponseType && !Context.IsMainPlayer)
+            {
+                var response = e.ReadAs<ZonePurchaseResponse>();
+                if (response.Success)
+                {
+                    var bundle = State.CustomBundles.FirstOrDefault(b => b.BundleId == response.ZoneId);
+                    if (bundle != null)
+                    {
+                        Game1.player.Money -= response.ScaledCost;
+                        foreach (var itemCost in bundle.Items)
+                            RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
+                        GiveBundleRewards(bundle);
+                    }
+                }
                 OnPurchaseResponse?.Invoke(response);
             }
 

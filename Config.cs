@@ -174,6 +174,18 @@ namespace ZoneLockChallenge
         public List<ItemCost> Rewards { get; set; }
     }
 
+    public class CustomBundle
+    {
+        public string BundleId { get; set; }
+        public string DisplayName { get; set; }
+        public string Description { get; set; }
+        public int MoneyCost { get; set; }
+        public List<ItemCost> Items { get; set; } = new();
+        public List<ItemCost> Rewards { get; set; } = new();
+        public PlateTile Plate { get; set; }
+        public bool IsCompleted { get; set; }
+    }
+
     public class MinecartConfig
     {
         public bool Enabled { get; set; } = true;

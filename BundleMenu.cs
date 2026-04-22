@@ -24,6 +24,7 @@ namespace ZoneLockChallenge
         private readonly bool purchaseEnabled;
         private readonly Action<string> onRequestPlatePlacement;
         private readonly Action<string> onRequestZoneEdit;
+        private readonly Action<string> onRequestBundleEdit;
 
         private int selectedIndex;
         private int scrollOffset;
@@ -40,6 +41,7 @@ namespace ZoneLockChallenge
         private List<ClickableTextureComponent> reorderUpButtons = new();
         private List<ClickableTextureComponent> reorderDownButtons = new();
         private List<ZoneDefinition> orderedZones = new();
+        private List<CustomBundle> customBundles = new();
 
         private Rectangle leftPanelRect;
         private Rectangle rightPanelRect;
@@ -48,7 +50,8 @@ namespace ZoneLockChallenge
 
         /// <param name="purchaseEnabled">False = read-only view (K key), True = can purchase (plate interaction).</param>
         /// <param name="focusZoneId">If set, auto-select this zone on open.</param>
-        public BundleMenu(ModConfig config, ZoneStateManager stateManager, bool purchaseEnabled = true, string focusZoneId = null, Action<string> onRequestPlatePlacement = null, Action<string> onRequestZoneEdit = null)
+        public BundleMenu(ModConfig config, ZoneStateManager stateManager, bool purchaseEnabled = true, string focusZoneId = null,
+            Action<string> onRequestPlatePlacement = null, Action<string> onRequestZoneEdit = null, Action<string> onRequestBundleEdit = null)
             : base(
                   (Game1.uiViewport.Width - MenuWidth) / 2,
                   (Game1.uiViewport.Height - MenuHeight) / 2,
@@ -59,10 +62,11 @@ namespace ZoneLockChallenge
             this.purchaseEnabled = purchaseEnabled;
             this.onRequestPlatePlacement = onRequestPlatePlacement;
             this.onRequestZoneEdit = onRequestZoneEdit;
+            this.onRequestBundleEdit = onRequestBundleEdit;
 
             stateManager.OnPurchaseResponse = OnPurchaseResponse;
 
-            RefreshOrderedZones();
+            RefreshSidebar();
             foreach (var zone in orderedZones)
             {
                 foreach (var itemCost in zone.Items)
@@ -72,10 +76,14 @@ namespace ZoneLockChallenge
                 foreach (var itemCost in stateManager.GetRewards(zone))
                     CacheItem(itemCost.ItemId);
             }
+            foreach (var bundle in customBundles)
+            {
+                foreach (var item in bundle.Items) CacheItem(item.ItemId);
+                foreach (var item in bundle.Rewards) CacheItem(item.ItemId);
+            }
 
             SetupLayout();
 
-            // Auto-select a zone if requested
             if (focusZoneId != null)
             {
                 int idx = orderedZones.FindIndex(z => z.ZoneId == focusZoneId);
@@ -87,9 +95,16 @@ namespace ZoneLockChallenge
             }
         }
 
-        private void RefreshOrderedZones()
+        private int TotalEntries => orderedZones.Count + customBundles.Count + (onRequestBundleEdit != null ? 1 : 0);
+        private bool IsZoneIndex(int idx) => idx >= 0 && idx < orderedZones.Count;
+        private bool IsBundleIndex(int idx) => idx >= orderedZones.Count && idx < orderedZones.Count + customBundles.Count;
+        private bool IsNewBundleIndex(int idx) => onRequestBundleEdit != null && idx == orderedZones.Count + customBundles.Count;
+        private CustomBundle GetBundleAt(int idx) => customBundles[idx - orderedZones.Count];
+
+        private void RefreshSidebar()
         {
             orderedZones = stateManager.GetOrderedZones();
+            customBundles = stateManager.GetCustomBundles().ToList();
         }
 
         private void SetupLayout()
@@ -154,17 +169,17 @@ namespace ZoneLockChallenge
         {
             base.receiveLeftClick(x, y, playSound);
 
-            // Reorder up/down (host only)
+            // Reorder up/down (host only, zones only)
             for (int i = 0; i < reorderUpButtons.Count; i++)
             {
                 int dataIndex = scrollOffset + i;
-                if (dataIndex >= orderedZones.Count) break;
+                if (!IsZoneIndex(dataIndex)) break;
                 if (reorderUpButtons[i].containsPoint(x, y) && dataIndex > 0)
                 {
                     var zone = orderedZones[dataIndex];
                     if (stateManager.MoveZoneInOrder(zone.ZoneId, -1))
                     {
-                        RefreshOrderedZones();
+                        RefreshSidebar();
                         selectedIndex = dataIndex - 1;
                         Game1.playSound("shwip");
                     }
@@ -175,7 +190,7 @@ namespace ZoneLockChallenge
                     var zone = orderedZones[dataIndex];
                     if (stateManager.MoveZoneInOrder(zone.ZoneId, 1))
                     {
-                        RefreshOrderedZones();
+                        RefreshSidebar();
                         selectedIndex = dataIndex + 1;
                         Game1.playSound("shwip");
                     }
@@ -188,19 +203,26 @@ namespace ZoneLockChallenge
                 if (zoneSlots[i].containsPoint(x, y))
                 {
                     int dataIndex = scrollOffset + i;
-                    if (dataIndex < orderedZones.Count) { selectedIndex = dataIndex; Game1.playSound("smallSelect"); }
+                    if (IsNewBundleIndex(dataIndex))
+                    {
+                        onRequestBundleEdit.Invoke(null);
+                        Game1.playSound("smallSelect");
+                        exitThisMenu();
+                        return;
+                    }
+                    if (dataIndex < TotalEntries) { selectedIndex = dataIndex; Game1.playSound("smallSelect"); }
                     return;
                 }
             }
 
             if (upArrow.containsPoint(x, y) && scrollOffset > 0) { scrollOffset--; Game1.playSound("shwip"); return; }
-            if (downArrow.containsPoint(x, y) && scrollOffset + maxVisibleRows < orderedZones.Count) { scrollOffset++; Game1.playSound("shwip"); return; }
+            if (downArrow.containsPoint(x, y) && scrollOffset + maxVisibleRows < TotalEntries) { scrollOffset++; Game1.playSound("shwip"); return; }
 
-            if (purchaseEnabled && purchaseButton.containsPoint(x, y) && !waitingForResponse)
+            if (purchaseButton.containsPoint(x, y) && !waitingForResponse)
                 TryPurchaseSelected();
 
-            // "Move Plate" and "Edit Zone" click areas (host only, below purchase button)
-            if (onRequestPlatePlacement != null && selectedIndex >= 0 && selectedIndex < orderedZones.Count)
+            // Host-only links below purchase button
+            if (onRequestPlatePlacement != null && IsZoneIndex(selectedIndex))
             {
                 string moveText = "Move Plate";
                 string editText = "Edit Zone";
@@ -214,8 +236,7 @@ namespace ZoneLockChallenge
                 Rectangle moveArea = new(linksStartX, linkY, (int)moveSize.X, (int)moveSize.Y);
                 if (moveArea.Contains(x, y))
                 {
-                    var zone = orderedZones[selectedIndex];
-                    onRequestPlatePlacement.Invoke(zone.ZoneId);
+                    onRequestPlatePlacement.Invoke(orderedZones[selectedIndex].ZoneId);
                     Game1.playSound("smallSelect");
                     exitThisMenu();
                     return;
@@ -225,8 +246,24 @@ namespace ZoneLockChallenge
                 Rectangle editArea = new(editX, linkY, (int)editSize.X, (int)editSize.Y);
                 if (editArea.Contains(x, y) && onRequestZoneEdit != null)
                 {
-                    var zone = orderedZones[selectedIndex];
-                    onRequestZoneEdit.Invoke(zone.ZoneId);
+                    onRequestZoneEdit.Invoke(orderedZones[selectedIndex].ZoneId);
+                    Game1.playSound("smallSelect");
+                    exitThisMenu();
+                    return;
+                }
+            }
+
+            // Host-only "Edit Bundle" link for custom bundles
+            if (onRequestBundleEdit != null && IsBundleIndex(selectedIndex))
+            {
+                string editText = "Edit Bundle";
+                Vector2 editSize = Game1.smallFont.MeasureString(editText);
+                int linkY = purchaseButton.bounds.Bottom + 12;
+                int editX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - (int)editSize.X) / 2;
+                Rectangle editArea = new(editX, linkY, (int)editSize.X, (int)editSize.Y);
+                if (editArea.Contains(x, y))
+                {
+                    onRequestBundleEdit.Invoke(GetBundleAt(selectedIndex).BundleId);
                     Game1.playSound("smallSelect");
                     exitThisMenu();
                     return;
@@ -238,7 +275,7 @@ namespace ZoneLockChallenge
         {
             base.receiveScrollWheelAction(direction);
             if (direction > 0 && scrollOffset > 0) scrollOffset--;
-            else if (direction < 0 && scrollOffset + maxVisibleRows < orderedZones.Count) scrollOffset++;
+            else if (direction < 0 && scrollOffset + maxVisibleRows < TotalEntries) scrollOffset++;
         }
 
         public override void receiveKeyPress(Keys key)
@@ -256,7 +293,13 @@ namespace ZoneLockChallenge
 
         private void TryPurchaseSelected()
         {
-            if (selectedIndex < 0 || selectedIndex >= orderedZones.Count) return;
+            if (IsBundleIndex(selectedIndex))
+            {
+                TryPurchaseBundle(GetBundleAt(selectedIndex));
+                return;
+            }
+            if (!IsZoneIndex(selectedIndex)) return;
+            if (!purchaseEnabled) return;
             var zone = orderedZones[selectedIndex];
             var farmer = Game1.player;
 
@@ -266,7 +309,6 @@ namespace ZoneLockChallenge
             { ShowStatus("You already have a ticket for today!", true); return; }
             if (!stateManager.ArePrerequisitesMet(zone))
             {
-                // Check which prerequisite is not met for a specific error message
                 if (!string.IsNullOrEmpty(zone.RequiresZone) && !stateManager.IsZonePermanentlyUnlocked(zone.RequiresZone))
                 {
                     var req = config.GetZoneById(zone.RequiresZone);
@@ -304,6 +346,28 @@ namespace ZoneLockChallenge
             else { waitingForResponse = true; ShowStatus("Processing...", false); }
         }
 
+        private void TryPurchaseBundle(CustomBundle bundle)
+        {
+            if (bundle.IsCompleted) { ShowStatus("Already completed!", true); return; }
+            var farmer = Game1.player;
+            if (farmer.Money < bundle.MoneyCost) { ShowStatus("Not enough gold!", true); return; }
+            foreach (var item in bundle.Items)
+            {
+                int have = 0;
+                foreach (var inv in farmer.Items) if (inv != null && inv.QualifiedItemId == item.ItemId) have += inv.Stack;
+                if (have < item.Count) { ShowStatus($"Need {item.Count}x {item.DisplayName} (have {have})", true); return; }
+            }
+
+            bool immediate = stateManager.TryPurchaseBundle(bundle.BundleId, farmer);
+            if (immediate)
+            {
+                ShowStatus($"{bundle.DisplayName} completed!", false);
+                Game1.playSound("purchaseClick");
+                RefreshSidebar();
+            }
+            else { waitingForResponse = true; ShowStatus("Processing...", false); }
+        }
+
         private void OnPurchaseResponse(ZonePurchaseResponse response)
         {
             waitingForResponse = false;
@@ -333,11 +397,13 @@ namespace ZoneLockChallenge
             DrawZoneList(b);
             DrawPanelBackground(b, rightPanelRect);
 
-            if (selectedIndex >= 0 && selectedIndex < orderedZones.Count)
+            if (IsZoneIndex(selectedIndex))
                 DrawZoneDetails(b, orderedZones[selectedIndex]);
+            else if (IsBundleIndex(selectedIndex))
+                DrawBundleDetails(b, GetBundleAt(selectedIndex));
 
             if (scrollOffset > 0) upArrow.draw(b);
-            if (scrollOffset + maxVisibleRows < orderedZones.Count) downArrow.draw(b);
+            if (scrollOffset + maxVisibleRows < TotalEntries) downArrow.draw(b);
 
             if (!string.IsNullOrEmpty(statusMessage))
             {
@@ -360,11 +426,32 @@ namespace ZoneLockChallenge
             for (int i = 0; i < maxVisibleRows; i++)
             {
                 int dataIndex = scrollOffset + i;
-                if (dataIndex >= orderedZones.Count) break;
+                if (dataIndex >= TotalEntries) break;
 
-                var zone = orderedZones[dataIndex];
                 var slot = zoneSlots[i];
                 bool isSelected = dataIndex == selectedIndex;
+
+                if (IsNewBundleIndex(dataIndex))
+                {
+                    if (isSelected) b.Draw(Game1.fadeToBlackRect, slot.bounds, Color.Wheat * 0.4f);
+                    b.DrawString(Game1.smallFont, "+ New Bundle", new Vector2(slot.bounds.X + 40, slot.bounds.Y + (ZoneRowHeight - 28) / 2), Color.SaddleBrown);
+                    continue;
+                }
+
+                if (IsBundleIndex(dataIndex))
+                {
+                    var bundle = GetBundleAt(dataIndex);
+                    if (isSelected) b.Draw(Game1.fadeToBlackRect, slot.bounds, Color.Wheat * 0.4f);
+                    string icon = bundle.IsCompleted ? "✓" : "○";
+                    Color icoColor = bundle.IsCompleted ? Color.LimeGreen : Color.Orange;
+                    b.DrawString(Game1.dialogueFont, icon, new Vector2(slot.bounds.X + 4, slot.bounds.Y + (ZoneRowHeight - 36) / 2), icoColor);
+                    Color nameCol = isSelected ? Color.Black : (bundle.IsCompleted ? Color.DarkGreen : Color.DarkGoldenrod);
+                    b.DrawString(Game1.smallFont, bundle.DisplayName, new Vector2(slot.bounds.X + 40, slot.bounds.Y + (ZoneRowHeight - 28) / 2), nameCol);
+                    continue;
+                }
+
+                if (!IsZoneIndex(dataIndex)) break;
+                var zone = orderedZones[dataIndex];
                 bool isPermanent = stateManager.IsZonePermanentlyUnlocked(zone.ZoneId);
                 bool hasTicket = stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID);
                 bool isAccessible = isPermanent || hasTicket;
@@ -372,7 +459,6 @@ namespace ZoneLockChallenge
                 if (isSelected)
                     b.Draw(Game1.fadeToBlackRect, slot.bounds, Color.Wheat * 0.4f);
 
-                // Status icon
                 string statusIcon; Color iconColor;
                 if (isPermanent) { statusIcon = "+"; iconColor = Color.LimeGreen; }
                 else if (hasTicket) { statusIcon = "T"; iconColor = Color.LimeGreen; }
@@ -383,8 +469,7 @@ namespace ZoneLockChallenge
                 Color nameColor = isSelected ? Color.Black : (isAccessible ? Color.DarkGreen : Color.DarkRed);
                 b.DrawString(Game1.smallFont, zone.DisplayName, new Vector2(slot.bounds.X + 40, slot.bounds.Y + (ZoneRowHeight - 28) / 2), nameColor);
 
-                // Host-only reorder buttons on the right edge
-                if (i < reorderUpButtons.Count)
+                if (i < reorderUpButtons.Count && IsZoneIndex(dataIndex))
                 {
                     bool canUp = dataIndex > 0;
                     bool canDown = dataIndex < orderedZones.Count - 1;
@@ -607,9 +692,109 @@ namespace ZoneLockChallenge
             }
         }
 
+        private void DrawBundleDetails(SpriteBatch b, CustomBundle bundle)
+        {
+            int x = rightPanelRect.X + Padding;
+            int y = rightPanelRect.Y + Padding;
+            int contentWidth = rightPanelRect.Width - Padding * 2;
+
+            b.DrawString(Game1.dialogueFont, bundle.DisplayName, new Vector2(x, y), Color.SaddleBrown);
+            y += 48;
+
+            if (!string.IsNullOrEmpty(bundle.Description))
+            {
+                string desc = Game1.parseText(bundle.Description, Game1.smallFont, contentWidth);
+                b.DrawString(Game1.smallFont, desc, new Vector2(x, y), Color.DarkSlateGray);
+                y += (int)Game1.smallFont.MeasureString(desc).Y + 16;
+            }
+
+            b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, contentWidth, 2), Color.SaddleBrown * 0.5f);
+            y += 12;
+
+            b.DrawString(Game1.smallFont, "Type: Custom Bundle", new Vector2(x, y), Color.Black);
+            y += 32;
+
+            if (bundle.MoneyCost > 0)
+            {
+                bool canAfford = Game1.player.Money >= bundle.MoneyCost;
+                b.Draw(Game1.mouseCursors, new Vector2(x, y - 2), new Rectangle(193, 373, 9, 10), Color.White, 0f, Vector2.Zero, 3f, SpriteEffects.None, 1f);
+                b.DrawString(Game1.smallFont, $" {bundle.MoneyCost:N0}g", new Vector2(x + 30, y), canAfford ? Color.DarkGreen : Color.DarkRed);
+                y += 36;
+            }
+
+            if (bundle.Items.Count > 0)
+            {
+                b.DrawString(Game1.smallFont, "Items required:", new Vector2(x, y), Color.Black);
+                y += 28;
+                foreach (var item in bundle.Items)
+                {
+                    int have = 0;
+                    foreach (var inv in Game1.player.Items)
+                        if (inv != null && inv.QualifiedItemId == item.ItemId) have += inv.Stack;
+                    bool hasEnough = have >= item.Count;
+                    int textX = x + 8;
+                    if (itemCache.TryGetValue(item.ItemId, out var cached))
+                    {
+                        cached.drawInMenu(b, new Vector2(x - 20, y - 24), 0.5f, 1f, 0.9f, StackDrawType.Hide);
+                        textX = x + 24;
+                    }
+                    string check = hasEnough ? "✓ " : "";
+                    b.DrawString(Game1.smallFont, $"{check}{item.DisplayName}: {have}/{item.Count}", new Vector2(textX, y), hasEnough ? Color.DarkGreen : Color.DarkRed);
+                    y += 36;
+                }
+            }
+
+            if (bundle.Rewards.Count > 0)
+            {
+                b.DrawString(Game1.smallFont, "Rewards:", new Vector2(x, y), Color.Black);
+                y += 28;
+                foreach (var reward in bundle.Rewards)
+                {
+                    int textX = x + 8;
+                    if (itemCache.TryGetValue(reward.ItemId, out var cached))
+                    {
+                        cached.drawInMenu(b, new Vector2(x - 20, y - 24), 0.5f, 1f, 0.9f, StackDrawType.Hide);
+                        textX = x + 24;
+                    }
+                    b.DrawString(Game1.smallFont, $"{reward.DisplayName} x{reward.Count}", new Vector2(textX, y), Color.DarkGoldenrod);
+                    y += 36;
+                }
+            }
+
+            y += 8;
+            string status = bundle.IsCompleted ? "COMPLETED" : "INCOMPLETE";
+            Color statusColor = bundle.IsCompleted ? Color.LimeGreen : Color.Orange;
+            b.DrawString(Game1.dialogueFont, status, new Vector2(x, y), statusColor);
+
+            // Purchase button
+            bool canPurchase = !bundle.IsCompleted && !waitingForResponse;
+            Color btnColor = canPurchase ? Color.White : Color.Gray * 0.5f;
+            drawTextureBox(b, Game1.mouseCursors, new Rectangle(432, 439, 9, 9),
+                purchaseButton.bounds.X, purchaseButton.bounds.Y, purchaseButton.bounds.Width, purchaseButton.bounds.Height,
+                btnColor, 4f, drawShadow: true);
+
+            string btnText = bundle.IsCompleted ? "Completed" : "Complete Bundle";
+            Vector2 btnTextSize = Game1.smallFont.MeasureString(btnText);
+            b.DrawString(Game1.smallFont, btnText,
+                new Vector2(purchaseButton.bounds.X + (purchaseButton.bounds.Width - btnTextSize.X) / 2,
+                            purchaseButton.bounds.Y + (purchaseButton.bounds.Height - btnTextSize.Y) / 2),
+                canPurchase ? Color.DarkSlateGray : Color.Gray);
+
+            // Host-only "Edit Bundle" link
+            if (onRequestBundleEdit != null)
+            {
+                string editText = "Edit Bundle";
+                Vector2 editSize = Game1.smallFont.MeasureString(editText);
+                int linkY = purchaseButton.bounds.Bottom + 12;
+                int editX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - (int)editSize.X) / 2;
+                b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY), Color.SaddleBrown, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+            }
+        }
+
         private bool CanPurchase(ZoneDefinition zone)
         {
-            if (!purchaseEnabled || waitingForResponse) return false;
+            if (waitingForResponse) return false;
             if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId)) return false;
             if (zone.UnlockType == "ticket" && stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID)) return false;
             if (!stateManager.ArePrerequisitesMet(zone)) return false;

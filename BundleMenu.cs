@@ -35,6 +35,7 @@ namespace ZoneLockChallenge
         private bool waitingForResponse;
 
         private ClickableTextureComponent purchaseButton;
+        private Rectangle contributeButton;
         private ClickableTextureComponent upArrow;
         private ClickableTextureComponent downArrow;
         private List<ClickableComponent> zoneSlots = new();
@@ -163,6 +164,8 @@ namespace ZoneLockChallenge
             purchaseButton = new ClickableTextureComponent(
                 new Rectangle(purchaseBtnX, btnY, btnWidth, ButtonHeight),
                 Game1.mouseCursors, new Rectangle(256, 256, 10, 10), 4f);
+
+            contributeButton = new Rectangle(purchaseBtnX, btnY - ButtonHeight - 8, btnWidth, ButtonHeight);
         }
 
         public override void receiveLeftClick(int x, int y, bool playSound = true)
@@ -220,6 +223,9 @@ namespace ZoneLockChallenge
 
             if (purchaseButton.containsPoint(x, y) && !waitingForResponse)
                 TryPurchaseSelected();
+
+            if (contributeButton.Contains(x, y) && !waitingForResponse)
+                TryContributeSelected();
 
             // Host-only links below purchase button
             if (onRequestPlatePlacement != null && IsZoneIndex(selectedIndex))
@@ -364,6 +370,33 @@ namespace ZoneLockChallenge
                 ShowStatus($"{bundle.DisplayName} completed!", false);
                 Game1.playSound("purchaseClick");
                 RefreshSidebar();
+            }
+            else { waitingForResponse = true; ShowStatus("Processing...", false); }
+        }
+
+        private void TryContributeSelected()
+        {
+            if (!IsZoneIndex(selectedIndex) || !purchaseEnabled) return;
+            var zone = orderedZones[selectedIndex];
+            if (zone.UnlockType != "permanent") return;
+            if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
+            { ShowStatus("Already unlocked!", true); return; }
+            if (!stateManager.ArePrerequisitesMet(zone))
+            { ShowStatus("Prerequisites not met!", true); return; }
+
+            var farmer = Game1.player;
+            int scaledCost = stateManager.GetScaledMoneyCost(zone);
+            int remaining = scaledCost - stateManager.GetTotalContributions(zone.ZoneId);
+            if (remaining <= 0) { ShowStatus("Already fully funded!", true); return; }
+
+            int contribution = Math.Min(farmer.Money, remaining);
+            if (contribution <= 0) { ShowStatus("Not enough gold!", true); return; }
+
+            bool immediate = stateManager.TryContribute(zone.ZoneId, farmer, contribution);
+            if (immediate)
+            {
+                ShowStatus($"Contributed {contribution}g!", false);
+                Game1.playSound("purchaseClick");
             }
             else { waitingForResponse = true; ShowStatus("Processing...", false); }
         }
@@ -519,6 +552,26 @@ namespace ZoneLockChallenge
             b.DrawString(Game1.smallFont, costText, new Vector2(x + 30, y), canAffordGold ? Color.DarkGreen : Color.DarkRed);
             y += 36;
 
+            if (zone.UnlockType == "permanent" && !stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
+            {
+                int totalContributed = stateManager.GetTotalContributions(zone.ZoneId);
+                if (totalContributed > 0)
+                {
+                    float progress = Math.Min(1f, (float)totalContributed / scaledCost);
+                    b.DrawString(Game1.smallFont, $"Pooled: {totalContributed:N0} / {scaledCost:N0}g", new Vector2(x, y), Color.DarkSlateGray);
+                    y += 26;
+                    int barWidth = Math.Min(contentWidth, 280);
+                    int barHeight = 16;
+                    b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, barWidth, barHeight), Color.Gray * 0.4f);
+                    b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, (int)(barWidth * progress), barHeight), Color.Gold);
+                    b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, barWidth, 2), Color.SaddleBrown * 0.6f);
+                    b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y + barHeight - 2, barWidth, 2), Color.SaddleBrown * 0.6f);
+                    b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, 2, barHeight), Color.SaddleBrown * 0.6f);
+                    b.Draw(Game1.fadeToBlackRect, new Rectangle(x + barWidth - 2, y, 2, barHeight), Color.SaddleBrown * 0.6f);
+                    y += barHeight + 12;
+                }
+            }
+
             // Item costs with icons (using effective items from overrides)
             var effectiveItems = stateManager.GetEffectiveItems(zone);
             if (effectiveItems.Count > 0)
@@ -656,6 +709,21 @@ namespace ZoneLockChallenge
                     new Vector2(purchaseButton.bounds.X + (purchaseButton.bounds.Width - hintSize.X) / 2,
                                 purchaseButton.bounds.Y + (purchaseButton.bounds.Height - hintSize.Y) / 2),
                     Color.Gray);
+            }
+
+            if (purchaseEnabled && zone.UnlockType == "permanent" && !stateManager.IsZonePermanentlyUnlocked(zone.ZoneId) && stateManager.ArePrerequisitesMet(zone))
+            {
+                bool canContribute = Game1.player.Money > 0 && !waitingForResponse;
+                Color cBtnColor = canContribute ? Color.White : Color.Gray * 0.5f;
+                drawTextureBox(b, Game1.mouseCursors, new Rectangle(432, 439, 9, 9),
+                    contributeButton.X, contributeButton.Y, contributeButton.Width, contributeButton.Height,
+                    cBtnColor, 4f, drawShadow: true);
+                string cBtnText = "Contribute Gold";
+                Vector2 cBtnSize = Game1.smallFont.MeasureString(cBtnText);
+                b.DrawString(Game1.smallFont, cBtnText,
+                    new Vector2(contributeButton.X + (contributeButton.Width - cBtnSize.X) / 2,
+                                contributeButton.Y + (contributeButton.Height - cBtnSize.Y) / 2),
+                    canContribute ? Color.DarkSlateGray : Color.Gray);
             }
 
             // Host-only links: "Move Plate" and "Edit Zone"

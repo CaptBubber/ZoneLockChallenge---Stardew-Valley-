@@ -20,6 +20,8 @@ namespace ZoneLockChallenge
         /// <summary>Host-managed mine level gate overrides. Null = use config defaults.</summary>
         public List<MineLevelGate> MineLevelGateOverrides { get; set; }
         public List<CustomBundle> CustomBundles { get; set; } = new();
+        /// <summary>Gold pooled toward zone unlocks: zoneId -> (farmerId -> gold contributed).</summary>
+        public Dictionary<string, Dictionary<long, int>> ZoneContributions { get; set; } = new();
     }
 
     public class ZoneSyncMessage
@@ -31,6 +33,7 @@ namespace ZoneLockChallenge
         public List<string> ZoneOrder { get; set; } = new();
         public List<MineLevelGate> MineLevelGateOverrides { get; set; }
         public List<CustomBundle> CustomBundles { get; set; } = new();
+        public Dictionary<string, Dictionary<long, int>> ZoneContributions { get; set; } = new();
     }
 
     public class ZonePurchaseRequest
@@ -47,6 +50,18 @@ namespace ZoneLockChallenge
         public int ScaledCost { get; set; }
     }
 
+    public class GlobalNotification
+    {
+        public string Message { get; set; }
+    }
+
+    public class ContributeRequest
+    {
+        public string ZoneId { get; set; }
+        public long FarmerId { get; set; }
+        public int Amount { get; set; }
+    }
+
     public class ZoneStateManager
     {
         private const string SaveDataKey = "ZoneLockChallenge_State";
@@ -55,6 +70,9 @@ namespace ZoneLockChallenge
         private const string PurchaseResponseType = "ZoneLockChallenge_PurchaseResp";
         private const string BundlePurchaseRequestType = "ZoneLockChallenge_BundlePurchaseReq";
         private const string BundlePurchaseResponseType = "ZoneLockChallenge_BundlePurchaseResp";
+        private const string NotificationType = "ZoneLockChallenge_Notification";
+        private const string ContributeRequestType = "ZoneLockChallenge_ContributeReq";
+        private const string ContributeResponseType = "ZoneLockChallenge_ContributeResp";
 
         private readonly IModHelper helper;
         private readonly IMonitor monitor;
@@ -96,6 +114,14 @@ namespace ZoneLockChallenge
             BroadcastState();
         }
 
+        private void BroadcastNotification(string message)
+        {
+            if (!Context.IsMainPlayer) return;
+            var notification = new GlobalNotification { Message = message };
+            helper.Multiplayer.SendMessage(notification, NotificationType, modIDs: new[] { helper.ModRegistry.ModID });
+            Game1.addHUDMessage(new HUDMessage(message, HUDMessage.newQuest_type));
+        }
+
         public bool IsZoneAccessible(string zoneId, long farmerId)
         {
             if (State.UnlockedZones.Contains(zoneId))
@@ -107,6 +133,23 @@ namespace ZoneLockChallenge
         }
 
         public bool IsZonePermanentlyUnlocked(string zoneId) => State.UnlockedZones.Contains(zoneId);
+
+        public void AdminUnlock(string zoneId)
+        {
+            if (!Context.IsMainPlayer) return;
+            State.UnlockedZones.Add(zoneId);
+            State.ZoneContributions.Remove(zoneId);
+            SaveAndBroadcast();
+            OnStateChanged?.Invoke();
+        }
+
+        public void AdminLock(string zoneId)
+        {
+            if (!Context.IsMainPlayer) return;
+            State.UnlockedZones.Remove(zoneId);
+            SaveAndBroadcast();
+            OnStateChanged?.Invoke();
+        }
 
         /// <summary>Get the effective plate position for a zone (override from save data, or config default).</summary>
         public PlateTile GetEffectivePlate(ZoneDefinition zone)
@@ -345,6 +388,7 @@ namespace ZoneLockChallenge
 
             bundle.IsCompleted = true;
             monitor.Log($"Custom bundle '{bundleId}' completed by {buyer.Name}.", LogLevel.Info);
+            BroadcastNotification($"{buyer.Name} completed the {bundle.DisplayName} bundle!");
             SaveAndBroadcast();
             OnStateChanged?.Invoke();
             return true;
@@ -365,6 +409,85 @@ namespace ZoneLockChallenge
                 }
                 catch { monitor.Log($"Failed to create bundle reward '{reward.ItemId}'.", LogLevel.Warn); }
             }
+        }
+
+        // ── Group contributions ──────────────────────────────────────
+
+        public int GetTotalContributions(string zoneId)
+        {
+            if (!State.ZoneContributions.TryGetValue(zoneId, out var contribs)) return 0;
+            return contribs.Values.Sum();
+        }
+
+        public int GetPlayerContribution(string zoneId, long farmerId)
+        {
+            if (!State.ZoneContributions.TryGetValue(zoneId, out var contribs)) return 0;
+            return contribs.TryGetValue(farmerId, out int amount) ? amount : 0;
+        }
+
+        public bool TryContribute(string zoneId, Farmer contributor, int amount)
+        {
+            if (Context.IsMainPlayer)
+                return ExecuteContribution(zoneId, contributor, amount, out _);
+
+            var request = new ContributeRequest { ZoneId = zoneId, FarmerId = contributor.UniqueMultiplayerID, Amount = amount };
+            helper.Multiplayer.SendMessage(request, ContributeRequestType, modIDs: new[] { helper.ModRegistry.ModID });
+            return false;
+        }
+
+        private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount)
+        {
+            actualAmount = 0;
+            var zone = config.GetZoneById(zoneId);
+            if (zone == null || zone.UnlockType != "permanent") return false;
+            if (State.UnlockedZones.Contains(zoneId)) return false;
+            if (!ArePrerequisitesMet(zone)) return false;
+            if (amount <= 0 || contributor.Money < amount) return false;
+
+            int scaledCost = GetScaledMoneyCost(zone);
+            int totalSoFar = GetTotalContributions(zoneId);
+            int remaining = scaledCost - totalSoFar;
+            if (remaining <= 0) return false;
+
+            int actual = Math.Min(amount, remaining);
+            actualAmount = actual;
+            bool isLocal = (contributor.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID);
+            if (isLocal)
+                contributor.Money -= actual;
+
+            if (!State.ZoneContributions.ContainsKey(zoneId))
+                State.ZoneContributions[zoneId] = new Dictionary<long, int>();
+            State.ZoneContributions.TryGetValue(zoneId, out var contribs);
+            contribs[contributor.UniqueMultiplayerID] = GetPlayerContribution(zoneId, contributor.UniqueMultiplayerID) + actual;
+
+            int newTotal = GetTotalContributions(zoneId);
+            BroadcastNotification($"{contributor.Name} contributed {actual}g toward {zone.DisplayName} ({newTotal}/{scaledCost})");
+
+            if (newTotal >= scaledCost)
+            {
+                var effectiveItems = GetEffectiveItems(zone);
+                bool itemsMet = true;
+                foreach (var itemCost in effectiveItems)
+                    if (CountItemInInventory(contributor, itemCost.ItemId) < itemCost.Count)
+                    { itemsMet = false; break; }
+
+                if (itemsMet)
+                {
+                    if (isLocal)
+                    {
+                        foreach (var itemCost in effectiveItems)
+                            RemoveItemsFromInventory(contributor, itemCost.ItemId, itemCost.Count);
+                        GiveRewards(zone);
+                    }
+                    State.UnlockedZones.Add(zoneId);
+                    State.ZoneContributions.Remove(zoneId);
+                    BroadcastNotification($"{zone.DisplayName} has been unlocked!");
+                }
+            }
+
+            SaveAndBroadcast();
+            OnStateChanged?.Invoke();
+            return true;
         }
 
         // ── Zone purchases ──────────────────────────────────────────
@@ -413,6 +536,7 @@ namespace ZoneLockChallenge
             {
                 State.UnlockedZones.Add(zoneId);
                 monitor.Log($"Zone '{zoneId}' permanently unlocked by {buyer.Name}.", LogLevel.Info);
+                BroadcastNotification($"{buyer.Name} unlocked {zone.DisplayName}!");
             }
             else if (zone.UnlockType == "ticket")
             {
@@ -422,7 +546,7 @@ namespace ZoneLockChallenge
                 monitor.Log($"Ticket for '{zoneId}' purchased by {buyer.Name} (ID {buyer.UniqueMultiplayerID}) for day {Game1.Date.TotalDays}.", LogLevel.Info);
             }
 
-            BroadcastState();
+            SaveAndBroadcast();
             OnStateChanged?.Invoke();
             return true;
         }
@@ -508,7 +632,10 @@ namespace ZoneLockChallenge
                 ZoneOverrides = zoneOverridesCopy,
                 ZoneOrder = new List<string>(State.ZoneOrder),
                 MineLevelGateOverrides = mineGatesCopy,
-                CustomBundles = bundlesCopy
+                CustomBundles = bundlesCopy,
+                ZoneContributions = State.ZoneContributions.ToDictionary(
+                    kv => kv.Key,
+                    kv => new Dictionary<long, int>(kv.Value))
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -552,6 +679,7 @@ namespace ZoneLockChallenge
                 State.ZoneOrder = sync.ZoneOrder ?? new List<string>();
                 State.MineLevelGateOverrides = sync.MineLevelGateOverrides;
                 State.CustomBundles = sync.CustomBundles ?? new List<CustomBundle>();
+                State.ZoneContributions = sync.ZoneContributions ?? new Dictionary<string, Dictionary<long, int>>();
                 OnStateChanged?.Invoke();
             }
 
@@ -608,6 +736,38 @@ namespace ZoneLockChallenge
                     }
                 }
                 OnPurchaseResponse?.Invoke(response);
+            }
+
+            if (e.Type == ContributeRequestType && Context.IsMainPlayer)
+            {
+                var request = e.ReadAs<ContributeRequest>();
+                var contributor = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
+                if (contributor != null)
+                {
+                    bool success = ExecuteContribution(request.ZoneId, contributor, request.Amount, out int actualCost);
+                    var response = new ZonePurchaseResponse
+                    {
+                        ZoneId = request.ZoneId, Success = success,
+                        ScaledCost = actualCost,
+                        Message = success ? "Contribution received!" : "Could not contribute."
+                    };
+                    helper.Multiplayer.SendMessage(response, ContributeResponseType,
+                        modIDs: new[] { helper.ModRegistry.ModID }, playerIDs: new[] { request.FarmerId });
+                }
+            }
+
+            if (e.Type == ContributeResponseType && !Context.IsMainPlayer)
+            {
+                var response = e.ReadAs<ZonePurchaseResponse>();
+                if (response.Success)
+                    Game1.player.Money -= response.ScaledCost;
+                OnPurchaseResponse?.Invoke(response);
+            }
+
+            if (e.Type == NotificationType && !Context.IsMainPlayer)
+            {
+                var notification = e.ReadAs<GlobalNotification>();
+                Game1.addHUDMessage(new HUDMessage(notification.Message, HUDMessage.newQuest_type));
             }
 
             if (e.Type == "ZoneLockChallenge_SyncRequest" && Context.IsMainPlayer)

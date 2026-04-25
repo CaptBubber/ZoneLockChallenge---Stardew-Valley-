@@ -54,6 +54,14 @@ namespace ZoneLockChallenge
                 "Move a zone plate to your current cursor tile. Usage: zlc_moveplate <ZoneId>\nUse 'zlc_moveplate list' to see all zone IDs.",
                 OnMovePlateCommand);
 
+            helper.ConsoleCommands.Add("zlc_unlock",
+                "Manually unlock a zone (host only). Usage: zlc_unlock <ZoneId>\nUse 'zlc_unlock list' to see all zone IDs and their status.",
+                OnUnlockCommand);
+
+            helper.ConsoleCommands.Add("zlc_lock",
+                "Manually lock a zone (host only). Usage: zlc_lock <ZoneId>\nUse 'zlc_lock list' to see all zone IDs and their status.",
+                OnLockCommand);
+
             Monitor.Log("Zone Lock Challenge loaded. Press " + config.OpenMenuKey + " to view zones. Visit zone plates to purchase.", LogLevel.Info);
         }
 
@@ -403,6 +411,58 @@ namespace ZoneLockChallenge
             platePlacementZoneId = targetZone.ZoneId;
             Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{targetZone.DisplayName}' plate.", HUDMessage.newQuest_type));
             Monitor.Log($"Plate placement mode active for '{targetZone.ZoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);
+        }
+
+        private void OnUnlockCommand(string command, string[] args)
+        {
+            if (!Context.IsWorldReady) { Monitor.Log("You must be in-game to use this command.", LogLevel.Warn); return; }
+            if (!Context.IsMainPlayer) { Monitor.Log("Only the host can unlock zones.", LogLevel.Warn); return; }
+            if (args.Length == 0 || args[0].Equals("list", StringComparison.OrdinalIgnoreCase))
+            {
+                LogZoneStatus();
+                return;
+            }
+
+            string zoneId = args[0];
+            var zone = config.Zones.FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
+            if (zone == null) { Monitor.Log($"Unknown zone '{zoneId}'. Use 'zlc_unlock list' to see valid zone IDs.", LogLevel.Warn); return; }
+
+            if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
+            { Monitor.Log($"Zone '{zone.ZoneId}' is already unlocked.", LogLevel.Info); return; }
+
+            stateManager.AdminUnlock(zone.ZoneId);
+            Monitor.Log($"Zone '{zone.ZoneId}' ({zone.DisplayName}) has been manually unlocked.", LogLevel.Info);
+        }
+
+        private void OnLockCommand(string command, string[] args)
+        {
+            if (!Context.IsWorldReady) { Monitor.Log("You must be in-game to use this command.", LogLevel.Warn); return; }
+            if (!Context.IsMainPlayer) { Monitor.Log("Only the host can lock zones.", LogLevel.Warn); return; }
+            if (args.Length == 0 || args[0].Equals("list", StringComparison.OrdinalIgnoreCase))
+            {
+                LogZoneStatus();
+                return;
+            }
+
+            string zoneId = args[0];
+            var zone = config.Zones.FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
+            if (zone == null) { Monitor.Log($"Unknown zone '{zoneId}'. Use 'zlc_lock list' to see valid zone IDs.", LogLevel.Warn); return; }
+
+            if (!stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
+            { Monitor.Log($"Zone '{zone.ZoneId}' is already locked.", LogLevel.Info); return; }
+
+            stateManager.AdminLock(zone.ZoneId);
+            Monitor.Log($"Zone '{zone.ZoneId}' ({zone.DisplayName}) has been manually locked.", LogLevel.Info);
+        }
+
+        private void LogZoneStatus()
+        {
+            Monitor.Log("Zone status:", LogLevel.Info);
+            foreach (var zone in config.Zones)
+            {
+                string status = stateManager.IsZonePermanentlyUnlocked(zone.ZoneId) ? "UNLOCKED" : "LOCKED";
+                Monitor.Log($"  {zone.ZoneId} — {zone.DisplayName} — {status}", LogLevel.Info);
+            }
         }
 
         /// <summary>Called by BundleMenu to open the zone edit menu (host only).</summary>

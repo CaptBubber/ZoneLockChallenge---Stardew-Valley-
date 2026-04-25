@@ -16,9 +16,8 @@ namespace ZoneLockChallenge
         private const int MenuHeight = 780;
         private const int Padding = 16;
         private const int RowHeight = 36;
-        private const int InvCols = 12;
-        private const int InvRows = 2;
-        private const int InvSlotSize = 64;
+        private const int MaxSearchResults = 6;
+        private const int SearchRowHeight = 36;
 
         private readonly ZoneStateManager stateManager;
         private readonly string editingBundleId;
@@ -35,15 +34,19 @@ namespace ZoneLockChallenge
 
         private TextBox nameTextBox;
         private TextBox descTextBox;
-        private TextBox itemIdTextBox;
+        private TextBox searchTextBox;
+        private string lastSearchText = "";
         private int addCount = 1;
 
+        private static List<(string QualifiedId, string DisplayName)> itemIndex;
+        private List<(string QualifiedId, string DisplayName)> searchResults = new();
+
         private int innerX, innerY, innerWidth, innerHeight;
-        private Rectangle inventoryBounds;
+        private int searchResultsY;
         private Rectangle saveBtnBounds, cancelBtnBounds, deleteBtnBounds;
         private Rectangle goldMinus5k, goldMinus1k, goldPlus1k, goldPlus5k;
         private Rectangle reqModeBtn, rewardModeBtn;
-        private Rectangle addItemBtn, addCountMinus, addCountPlus;
+        private Rectangle addCountMinus, addCountPlus;
 
         private int itemScrollOffset;
         private int rewardScrollOffset;
@@ -93,10 +96,12 @@ namespace ZoneLockChallenge
             foreach (var item in editItems) CacheItem(item.ItemId);
             foreach (var item in editRewards) CacheItem(item.ItemId);
 
+            BuildItemIndex();
+
             var textBoxTex = Game1.content.Load<Texture2D>("LooseSprites\\textBox");
             nameTextBox = new TextBox(textBoxTex, null, Game1.smallFont, Color.Black) { Width = 400, Text = editName };
             descTextBox = new TextBox(textBoxTex, null, Game1.smallFont, Color.Black) { Width = 400, Text = editDescription };
-            itemIdTextBox = new TextBox(textBoxTex, null, Game1.smallFont, Color.Black) { Width = 280, Text = "" };
+            searchTextBox = new TextBox(textBoxTex, null, Game1.smallFont, Color.Black) { Width = 360, Text = "" };
 
             SetupLayout();
         }
@@ -105,6 +110,50 @@ namespace ZoneLockChallenge
         {
             if (string.IsNullOrEmpty(itemId) || itemCache.ContainsKey(itemId)) return;
             try { var item = ItemRegistry.Create(itemId); if (item != null) itemCache[itemId] = item; } catch { }
+        }
+
+        private static void BuildItemIndex()
+        {
+            if (itemIndex != null) return;
+            itemIndex = new();
+            foreach (var typeDef in ItemRegistry.ItemTypes)
+            {
+                foreach (var localId in typeDef.GetAllIds())
+                {
+                    string qid = typeDef.Identifier + localId;
+                    try
+                    {
+                        var parsed = ItemRegistry.GetMetadata(qid)?.GetParsedData();
+                        if (parsed != null && !string.IsNullOrEmpty(parsed.DisplayName))
+                            itemIndex.Add((qid, parsed.DisplayName));
+                    }
+                    catch { }
+                }
+            }
+            itemIndex.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void UpdateSearchResults()
+        {
+            string query = searchTextBox.Text.Trim();
+            if (query.Length < 2) { searchResults.Clear(); return; }
+            searchResults = itemIndex
+                .Where(item => item.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(item => item.DisplayName.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+                .ThenBy(item => item.DisplayName.Length)
+                .Take(MaxSearchResults)
+                .ToList();
+            foreach (var r in searchResults) CacheItem(r.QualifiedId);
+        }
+
+        public override void update(GameTime time)
+        {
+            base.update(time);
+            if (searchTextBox.Text != lastSearchText)
+            {
+                lastSearchText = searchTextBox.Text;
+                UpdateSearchResults();
+            }
         }
 
         private void SetupLayout()
@@ -128,20 +177,16 @@ namespace ZoneLockChallenge
             goldPlus1k = new Rectangle(goldBtnStartX + (goldBtnWidth + 8) * 2, goldY, goldBtnWidth, goldBtnHeight);
             goldPlus5k = new Rectangle(goldBtnStartX + (goldBtnWidth + 8) * 3, goldY, goldBtnWidth, goldBtnHeight);
 
-            int invWidth = InvCols * InvSlotSize;
-            int invX = innerX + (innerWidth - invWidth) / 2;
-            int invY = innerY + innerHeight - InvRows * InvSlotSize - 70;
-            inventoryBounds = new Rectangle(invX, invY, invWidth, InvRows * InvSlotSize);
+            int searchSectionY = innerY + innerHeight - MaxSearchResults * SearchRowHeight - 130;
+            reqModeBtn = new Rectangle(innerX, searchSectionY, 160, 32);
+            rewardModeBtn = new Rectangle(innerX + 170, searchSectionY, 160, 32);
+            addCountMinus = new Rectangle(innerX + innerWidth - 120, searchSectionY, 32, 32);
+            addCountPlus = new Rectangle(innerX + innerWidth - 50, searchSectionY, 32, 32);
 
-            int modeY = invY - 40;
-            reqModeBtn = new Rectangle(innerX, modeY, 160, 32);
-            rewardModeBtn = new Rectangle(innerX + 170, modeY, 160, 32);
-
-            itemIdTextBox.X = innerX + 350;
-            itemIdTextBox.Y = modeY;
-            addCountMinus = new Rectangle(innerX + 650, modeY, 32, 32);
-            addCountPlus = new Rectangle(innerX + 720, modeY, 32, 32);
-            addItemBtn = new Rectangle(innerX + 770, modeY, 80, 32);
+            int searchBoxY = searchSectionY + 42;
+            searchTextBox.X = innerX;
+            searchTextBox.Y = searchBoxY;
+            searchResultsY = searchBoxY + 44;
 
             int btnWidth = 140;
             int btnHeight = 48;
@@ -172,27 +217,28 @@ namespace ZoneLockChallenge
             if (addCountMinus.Contains(x, y)) { addCount = Math.Max(1, addCount - 1); Game1.playSound("smallSelect"); return; }
             if (addCountPlus.Contains(x, y)) { addCount++; Game1.playSound("smallSelect"); return; }
 
-            // Add item button
-            if (addItemBtn.Contains(x, y)) { TryAddItemFromTextBox(); return; }
+            // Search result clicks
+            for (int i = 0; i < searchResults.Count && i < MaxSearchResults; i++)
+            {
+                Rectangle row = new(innerX, searchResultsY + i * SearchRowHeight, innerWidth, SearchRowHeight);
+                if (row.Contains(x, y))
+                {
+                    var result = searchResults[i];
+                    AddItemToList(result.QualifiedId, result.DisplayName, addCount);
+                    Game1.playSound("smallSelect");
+                    return;
+                }
+            }
 
             // Text box focus
             DeselectAllTextBoxes();
             if (HitsTextBox(nameTextBox, x, y)) { nameTextBox.Selected = true; Game1.keyboardDispatcher.Subscriber = nameTextBox; }
             else if (HitsTextBox(descTextBox, x, y)) { descTextBox.Selected = true; Game1.keyboardDispatcher.Subscriber = descTextBox; }
-            else if (HitsTextBox(itemIdTextBox, x, y)) { itemIdTextBox.Selected = true; Game1.keyboardDispatcher.Subscriber = itemIdTextBox; }
+            else if (HitsTextBox(searchTextBox, x, y)) { searchTextBox.Selected = true; Game1.keyboardDispatcher.Subscriber = searchTextBox; }
 
             // Item list clicks
             if (HandleItemListClick(x, y, editItems, GetItemListY(), itemScrollOffset, MaxVisibleItemRows)) return;
             if (HandleItemListClick(x, y, editRewards, GetRewardListY(), rewardScrollOffset, MaxVisibleRewardRows)) return;
-
-            // Inventory click
-            var clickedItem = GetClickedInventoryItem(x, y);
-            if (clickedItem != null)
-            {
-                AddItemToList(clickedItem.QualifiedItemId, clickedItem.DisplayName, addCount);
-                Game1.playSound("smallSelect");
-                return;
-            }
 
             // Save
             if (saveBtnBounds.Contains(x, y))
@@ -255,10 +301,9 @@ namespace ZoneLockChallenge
                 }
                 return;
             }
-            if (itemIdTextBox.Selected)
+            if (searchTextBox.Selected)
             {
-                if (key == Keys.Escape) { itemIdTextBox.Selected = false; return; }
-                if (key == Keys.Enter) { TryAddItemFromTextBox(); return; }
+                if (key == Keys.Escape) { searchTextBox.Selected = false; return; }
                 return;
             }
 
@@ -274,30 +319,11 @@ namespace ZoneLockChallenge
         {
             nameTextBox.Selected = false;
             descTextBox.Selected = false;
-            itemIdTextBox.Selected = false;
+            searchTextBox.Selected = false;
         }
 
         private int GetItemListY() => innerY + 148;
         private int GetRewardListY() => GetItemListY() + 28 + Math.Min(editItems.Count, MaxVisibleItemRows) * RowHeight + 20;
-
-        private void TryAddItemFromTextBox()
-        {
-            string itemId = itemIdTextBox.Text.Trim();
-            if (string.IsNullOrEmpty(itemId)) return;
-            try
-            {
-                var testItem = ItemRegistry.Create(itemId);
-                if (testItem != null)
-                {
-                    AddItemToList(testItem.QualifiedItemId, testItem.DisplayName, addCount);
-                    CacheItem(testItem.QualifiedItemId);
-                    itemIdTextBox.Text = "";
-                    Game1.playSound("smallSelect");
-                }
-                else Game1.playSound("cancel");
-            }
-            catch { Game1.playSound("cancel"); }
-        }
 
         private void AddItemToList(string itemId, string displayName, int count)
         {
@@ -330,17 +356,6 @@ namespace ZoneLockChallenge
                 { list.RemoveAt(i + scrollOffset); Game1.playSound("trashcan"); return true; }
             }
             return false;
-        }
-
-        private Item GetClickedInventoryItem(int x, int y)
-        {
-            if (!inventoryBounds.Contains(x, y)) return null;
-            int col = (x - inventoryBounds.X) / InvSlotSize;
-            int row = (y - inventoryBounds.Y) / InvSlotSize;
-            int index = row * InvCols + col;
-            if (index >= 0 && index < Game1.player.Items.Count)
-                return Game1.player.Items[index];
-            return null;
         }
 
         private void SaveBundle()
@@ -406,19 +421,58 @@ namespace ZoneLockChallenge
                     new Vector2(innerX + 100, rewardListY), Color.Gray);
             DrawItemList(b, editRewards, rewardListY + 28, rewardScrollOffset, MaxVisibleRewardRows);
 
-            // Mode toggle + item ID input
+            // Divider above search
+            int divY = reqModeBtn.Y - 12;
+            b.Draw(Game1.fadeToBlackRect, new Rectangle(innerX, divY, innerWidth, 2), Color.SaddleBrown * 0.4f);
+
+            // Add to mode toggle + count
             DrawSmallButton(b, reqModeBtn, "Requirements", !addToRewards ? Color.White : Color.Gray * 0.6f);
             DrawSmallButton(b, rewardModeBtn, "Rewards", addToRewards ? Color.White : Color.Gray * 0.6f);
-            itemIdTextBox.Draw(b);
-            b.DrawString(Game1.smallFont, $"{addCount}", new Vector2(addCountMinus.Right + 4, addCountMinus.Y + 2), Color.Black);
+            b.DrawString(Game1.smallFont, "Count:", new Vector2(addCountMinus.X - 60, addCountMinus.Y + 4), Color.DarkSlateGray);
             DrawSmallButton(b, addCountMinus, "-");
+            b.DrawString(Game1.smallFont, $"{addCount}", new Vector2(addCountMinus.Right + 6, addCountMinus.Y + 4), Color.Black);
             DrawSmallButton(b, addCountPlus, "+");
-            DrawSmallButton(b, addItemBtn, "Add");
 
-            // Inventory
-            string invLabel = addToRewards ? "Click inventory to add reward:" : "Click inventory to add requirement:";
-            b.DrawString(Game1.smallFont, invLabel, new Vector2(inventoryBounds.X, inventoryBounds.Y - 24), Color.DarkSlateGray);
-            DrawInventoryGrid(b);
+            // Search box
+            b.DrawString(Game1.smallFont, "Search items:", new Vector2(innerX, searchTextBox.Y + 8), Color.DarkSlateGray);
+            searchTextBox.X = innerX + 130;
+            searchTextBox.Draw(b);
+
+            // Search results
+            if (searchResults.Count > 0)
+            {
+                for (int i = 0; i < searchResults.Count && i < MaxSearchResults; i++)
+                {
+                    var result = searchResults[i];
+                    int rowY = searchResultsY + i * SearchRowHeight;
+                    int textX = innerX + 8;
+
+                    // Hover highlight
+                    Rectangle rowRect = new(innerX, rowY, innerWidth, SearchRowHeight);
+                    if (rowRect.Contains(Game1.getMouseX(), Game1.getMouseY()))
+                        b.Draw(Game1.fadeToBlackRect, rowRect, Color.Wheat * 0.3f);
+
+                    if (itemCache.TryGetValue(result.QualifiedId, out var cached))
+                    {
+                        cached.drawInMenu(b, new Vector2(innerX - 16, rowY - 18), 0.45f, 1f, 0.9f, StackDrawType.Hide);
+                        textX = innerX + 30;
+                    }
+                    b.DrawString(Game1.smallFont, result.DisplayName, new Vector2(textX, rowY + 4), Color.Black);
+
+                    // Small "click to add" hint on right
+                    string hint = $"+ Add {addCount}";
+                    Vector2 hintSize = Game1.smallFont.MeasureString(hint);
+                    b.DrawString(Game1.smallFont, hint, new Vector2(innerX + innerWidth - hintSize.X - 4, rowY + 4), Color.SaddleBrown * 0.7f);
+                }
+            }
+            else if (searchTextBox.Text.Trim().Length >= 2)
+            {
+                b.DrawString(Game1.smallFont, "No items found.", new Vector2(innerX + 8, searchResultsY + 4), Color.Gray);
+            }
+            else if (searchTextBox.Text.Trim().Length > 0)
+            {
+                b.DrawString(Game1.smallFont, "Type 2+ characters to search...", new Vector2(innerX + 8, searchResultsY + 4), Color.Gray);
+            }
 
             // Buttons
             DrawButton(b, saveBtnBounds, "Save", Color.LimeGreen);
@@ -454,32 +508,6 @@ namespace ZoneLockChallenge
                 DrawSmallButton(b, new Rectangle(btnBaseX + 72, rowY, 28, 28), "+1");
                 DrawSmallButton(b, new Rectangle(btnBaseX + 104, rowY, 36, 28), "+10");
                 DrawSmallButton(b, new Rectangle(btnBaseX + 152, rowY, 56, 28), "X", Color.IndianRed);
-            }
-        }
-
-        private void DrawInventoryGrid(SpriteBatch b)
-        {
-            for (int i = 0; i < InvCols * InvRows; i++)
-            {
-                int col = i % InvCols;
-                int row = i / InvCols;
-                int sx = inventoryBounds.X + col * InvSlotSize;
-                int sy = inventoryBounds.Y + row * InvSlotSize;
-                b.Draw(Game1.menuTexture, new Rectangle(sx, sy, InvSlotSize, InvSlotSize), new Rectangle(128, 128, 64, 64), Color.White);
-                if (i < Game1.player.Items.Count)
-                {
-                    var item = Game1.player.Items[i];
-                    if (item != null) item.drawInMenu(b, new Vector2(sx, sy), 1f);
-                }
-            }
-
-            int mouseX = Game1.getMouseX();
-            int mouseY = Game1.getMouseY();
-            if (inventoryBounds.Contains(mouseX, mouseY))
-            {
-                int hCol = (mouseX - inventoryBounds.X) / InvSlotSize;
-                int hRow = (mouseY - inventoryBounds.Y) / InvSlotSize;
-                b.Draw(Game1.fadeToBlackRect, new Rectangle(inventoryBounds.X + hCol * InvSlotSize, inventoryBounds.Y + hRow * InvSlotSize, InvSlotSize, InvSlotSize), Color.White * 0.3f);
             }
         }
 

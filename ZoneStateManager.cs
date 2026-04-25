@@ -134,6 +134,23 @@ namespace ZoneLockChallenge
 
         public bool IsZonePermanentlyUnlocked(string zoneId) => State.UnlockedZones.Contains(zoneId);
 
+        public void AdminUnlock(string zoneId)
+        {
+            if (!Context.IsMainPlayer) return;
+            State.UnlockedZones.Add(zoneId);
+            State.ZoneContributions.Remove(zoneId);
+            SaveAndBroadcast();
+            OnStateChanged?.Invoke();
+        }
+
+        public void AdminLock(string zoneId)
+        {
+            if (!Context.IsMainPlayer) return;
+            State.UnlockedZones.Remove(zoneId);
+            SaveAndBroadcast();
+            OnStateChanged?.Invoke();
+        }
+
         /// <summary>Get the effective plate position for a zone (override from save data, or config default).</summary>
         public PlateTile GetEffectivePlate(ZoneDefinition zone)
         {

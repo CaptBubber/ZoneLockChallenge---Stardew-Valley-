@@ -422,7 +422,7 @@ namespace ZoneLockChallenge
                 monitor.Log($"Ticket for '{zoneId}' purchased by {buyer.Name} (ID {buyer.UniqueMultiplayerID}) for day {Game1.Date.TotalDays}.", LogLevel.Info);
             }
 
-            BroadcastState();
+            SaveAndBroadcast();
             OnStateChanged?.Invoke();
             return true;
         }

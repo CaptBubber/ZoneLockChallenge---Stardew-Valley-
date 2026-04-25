@@ -47,6 +47,11 @@ namespace ZoneLockChallenge
         public int ScaledCost { get; set; }
     }
 
+    public class GlobalNotification
+    {
+        public string Message { get; set; }
+    }
+
     public class ZoneStateManager
     {
         private const string SaveDataKey = "ZoneLockChallenge_State";
@@ -55,6 +60,7 @@ namespace ZoneLockChallenge
         private const string PurchaseResponseType = "ZoneLockChallenge_PurchaseResp";
         private const string BundlePurchaseRequestType = "ZoneLockChallenge_BundlePurchaseReq";
         private const string BundlePurchaseResponseType = "ZoneLockChallenge_BundlePurchaseResp";
+        private const string NotificationType = "ZoneLockChallenge_Notification";
 
         private readonly IModHelper helper;
         private readonly IMonitor monitor;
@@ -94,6 +100,14 @@ namespace ZoneLockChallenge
         {
             SaveState();
             BroadcastState();
+        }
+
+        private void BroadcastNotification(string message)
+        {
+            if (!Context.IsMainPlayer) return;
+            var notification = new GlobalNotification { Message = message };
+            helper.Multiplayer.SendMessage(notification, NotificationType, modIDs: new[] { helper.ModRegistry.ModID });
+            Game1.addHUDMessage(new HUDMessage(message, HUDMessage.newQuest_type));
         }
 
         public bool IsZoneAccessible(string zoneId, long farmerId)
@@ -345,6 +359,7 @@ namespace ZoneLockChallenge
 
             bundle.IsCompleted = true;
             monitor.Log($"Custom bundle '{bundleId}' completed by {buyer.Name}.", LogLevel.Info);
+            BroadcastNotification($"{buyer.Name} completed the {bundle.DisplayName} bundle!");
             SaveAndBroadcast();
             OnStateChanged?.Invoke();
             return true;
@@ -413,6 +428,7 @@ namespace ZoneLockChallenge
             {
                 State.UnlockedZones.Add(zoneId);
                 monitor.Log($"Zone '{zoneId}' permanently unlocked by {buyer.Name}.", LogLevel.Info);
+                BroadcastNotification($"{buyer.Name} unlocked {zone.DisplayName}!");
             }
             else if (zone.UnlockType == "ticket")
             {
@@ -608,6 +624,12 @@ namespace ZoneLockChallenge
                     }
                 }
                 OnPurchaseResponse?.Invoke(response);
+            }
+
+            if (e.Type == NotificationType && !Context.IsMainPlayer)
+            {
+                var notification = e.ReadAs<GlobalNotification>();
+                Game1.addHUDMessage(new HUDMessage(notification.Message, HUDMessage.newQuest_type));
             }
 
             if (e.Type == "ZoneLockChallenge_SyncRequest" && Context.IsMainPlayer)

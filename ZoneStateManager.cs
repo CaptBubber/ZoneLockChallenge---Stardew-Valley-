@@ -22,6 +22,7 @@ namespace ZoneLockChallenge
         public List<CustomBundle> CustomBundles { get; set; } = new();
         /// <summary>Gold pooled toward zone unlocks: zoneId -> (farmerId -> gold contributed).</summary>
         public Dictionary<string, Dictionary<long, int>> ZoneContributions { get; set; } = new();
+        public List<RunLogEntry> RunLog { get; set; } = new();
     }
 
     public class ZoneSyncMessage
@@ -34,6 +35,7 @@ namespace ZoneLockChallenge
         public List<MineLevelGate> MineLevelGateOverrides { get; set; }
         public List<CustomBundle> CustomBundles { get; set; } = new();
         public Dictionary<string, Dictionary<long, int>> ZoneContributions { get; set; } = new();
+        public List<RunLogEntry> RunLog { get; set; } = new();
     }
 
     public class ZonePurchaseRequest
@@ -120,6 +122,41 @@ namespace ZoneLockChallenge
             var notification = new GlobalNotification { Message = message };
             helper.Multiplayer.SendMessage(notification, NotificationType, modIDs: new[] { helper.ModRegistry.ModID });
             Game1.addHUDMessage(new HUDMessage(message, HUDMessage.newQuest_type));
+        }
+
+        public List<RunLogEntry> GetRunLog() => State.RunLog;
+
+        public int GetTotalGoldSpent()
+        {
+            int total = 0;
+            foreach (var entry in State.RunLog)
+                if (entry.EventType == "zone_unlock" || entry.EventType == "ticket_purchase" || entry.EventType == "bundle_complete" || entry.EventType == "contribution")
+                    total += entry.GoldAmount;
+            return total;
+        }
+
+        public int GetPlayerGoldSpent(string playerName)
+        {
+            int total = 0;
+            foreach (var entry in State.RunLog)
+                if (entry.PlayerName == playerName && entry.GoldAmount > 0)
+                    total += entry.GoldAmount;
+            return total;
+        }
+
+        private void AddLogEntry(string eventType, string playerName, string targetName, int goldAmount = 0)
+        {
+            if (!Context.IsMainPlayer) return;
+            State.RunLog.Add(new RunLogEntry
+            {
+                Day = Game1.dayOfMonth,
+                Season = Game1.currentSeason,
+                Year = Game1.year,
+                EventType = eventType,
+                PlayerName = playerName,
+                TargetName = targetName,
+                GoldAmount = goldAmount
+            });
         }
 
         public bool IsZoneAccessible(string zoneId, long farmerId)
@@ -388,6 +425,7 @@ namespace ZoneLockChallenge
 
             bundle.IsCompleted = true;
             monitor.Log($"Custom bundle '{bundleId}' completed by {buyer.Name}.", LogLevel.Info);
+            AddLogEntry("bundle_complete", buyer.Name, bundle.DisplayName, cost);
             BroadcastNotification($"{buyer.Name} completed the {bundle.DisplayName} bundle!");
             SaveAndBroadcast();
             OnStateChanged?.Invoke();
@@ -461,6 +499,7 @@ namespace ZoneLockChallenge
             contribs[contributor.UniqueMultiplayerID] = GetPlayerContribution(zoneId, contributor.UniqueMultiplayerID) + actual;
 
             int newTotal = GetTotalContributions(zoneId);
+            AddLogEntry("contribution", contributor.Name, zone.DisplayName, actual);
             BroadcastNotification($"{contributor.Name} contributed {actual}g toward {zone.DisplayName} ({newTotal}/{scaledCost})");
 
             if (newTotal >= scaledCost)
@@ -481,6 +520,7 @@ namespace ZoneLockChallenge
                     }
                     State.UnlockedZones.Add(zoneId);
                     State.ZoneContributions.Remove(zoneId);
+                    AddLogEntry("zone_unlock", contributor.Name, zone.DisplayName, 0);
                     BroadcastNotification($"{zone.DisplayName} has been unlocked!");
                 }
             }
@@ -536,6 +576,7 @@ namespace ZoneLockChallenge
             {
                 State.UnlockedZones.Add(zoneId);
                 monitor.Log($"Zone '{zoneId}' permanently unlocked by {buyer.Name}.", LogLevel.Info);
+                AddLogEntry("zone_unlock", buyer.Name, zone.DisplayName, scaledCost);
                 BroadcastNotification($"{buyer.Name} unlocked {zone.DisplayName}!");
             }
             else if (zone.UnlockType == "ticket")
@@ -543,6 +584,7 @@ namespace ZoneLockChallenge
                 if (!State.ActiveTickets.ContainsKey(zoneId))
                     State.ActiveTickets[zoneId] = new Dictionary<long, int>();
                 State.ActiveTickets[zoneId][buyer.UniqueMultiplayerID] = Game1.Date.TotalDays;
+                AddLogEntry("ticket_purchase", buyer.Name, zone.DisplayName, scaledCost);
                 monitor.Log($"Ticket for '{zoneId}' purchased by {buyer.Name} (ID {buyer.UniqueMultiplayerID}) for day {Game1.Date.TotalDays}.", LogLevel.Info);
             }
 
@@ -635,7 +677,13 @@ namespace ZoneLockChallenge
                 CustomBundles = bundlesCopy,
                 ZoneContributions = State.ZoneContributions.ToDictionary(
                     kv => kv.Key,
-                    kv => new Dictionary<long, int>(kv.Value))
+                    kv => new Dictionary<long, int>(kv.Value)),
+                RunLog = State.RunLog.Select(e => new RunLogEntry
+                {
+                    Day = e.Day, Season = e.Season, Year = e.Year,
+                    EventType = e.EventType, PlayerName = e.PlayerName,
+                    TargetName = e.TargetName, GoldAmount = e.GoldAmount
+                }).ToList()
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -680,6 +728,7 @@ namespace ZoneLockChallenge
                 State.MineLevelGateOverrides = sync.MineLevelGateOverrides;
                 State.CustomBundles = sync.CustomBundles ?? new List<CustomBundle>();
                 State.ZoneContributions = sync.ZoneContributions ?? new Dictionary<string, Dictionary<long, int>>();
+                State.RunLog = sync.RunLog ?? new List<RunLogEntry>();
                 OnStateChanged?.Invoke();
             }
 

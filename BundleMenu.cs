@@ -34,6 +34,11 @@ namespace ZoneLockChallenge
         private bool statusIsError;
         private bool waitingForResponse;
 
+        private bool showRunLog;
+        private int logScrollOffset;
+        private Rectangle runLogTabRect;
+        private Rectangle zonesTabRect;
+
         private ClickableTextureComponent purchaseButton;
         private Rectangle contributeButton;
         private ClickableTextureComponent upArrow;
@@ -166,11 +171,23 @@ namespace ZoneLockChallenge
                 Game1.mouseCursors, new Rectangle(256, 256, 10, 10), 4f);
 
             contributeButton = new Rectangle(purchaseBtnX, btnY - ButtonHeight - 8, btnWidth, ButtonHeight);
+
+            int tabW = (rightPanelRect.Width - Padding * 2) / 2;
+            int tabY = rightPanelRect.Y - 40;
+            zonesTabRect = new Rectangle(rightPanelRect.X + Padding, tabY, tabW - 4, 36);
+            runLogTabRect = new Rectangle(rightPanelRect.X + Padding + tabW + 4, tabY, tabW - 4, 36);
         }
 
         public override void receiveLeftClick(int x, int y, bool playSound = true)
         {
             base.receiveLeftClick(x, y, playSound);
+
+            if (zonesTabRect.Contains(x, y) && showRunLog)
+            { showRunLog = false; Game1.playSound("smallSelect"); return; }
+            if (runLogTabRect.Contains(x, y) && !showRunLog)
+            { showRunLog = true; logScrollOffset = 0; Game1.playSound("smallSelect"); return; }
+
+            if (showRunLog) return;
 
             // Reorder up/down (host only, zones only)
             for (int i = 0; i < reorderUpButtons.Count; i++)
@@ -280,6 +297,14 @@ namespace ZoneLockChallenge
         public override void receiveScrollWheelAction(int direction)
         {
             base.receiveScrollWheelAction(direction);
+            if (showRunLog)
+            {
+                var log = stateManager.GetRunLog();
+                int maxLogVisible = (rightPanelRect.Height - 100) / 28;
+                if (direction > 0 && logScrollOffset > 0) logScrollOffset--;
+                else if (direction < 0 && logScrollOffset + maxLogVisible < log.Count) logScrollOffset++;
+                return;
+            }
             if (direction > 0 && scrollOffset > 0) scrollOffset--;
             else if (direction < 0 && scrollOffset + maxVisibleRows < TotalEntries) scrollOffset++;
         }
@@ -430,21 +455,31 @@ namespace ZoneLockChallenge
             DrawZoneList(b);
             DrawPanelBackground(b, rightPanelRect);
 
-            if (IsZoneIndex(selectedIndex))
-                DrawZoneDetails(b, orderedZones[selectedIndex]);
-            else if (IsBundleIndex(selectedIndex))
-                DrawBundleDetails(b, GetBundleAt(selectedIndex));
+            DrawTab(b, zonesTabRect, "Details", !showRunLog);
+            DrawTab(b, runLogTabRect, "Run Log", showRunLog);
+
+            if (showRunLog)
+            {
+                DrawRunLog(b);
+            }
+            else
+            {
+                if (IsZoneIndex(selectedIndex))
+                    DrawZoneDetails(b, orderedZones[selectedIndex]);
+                else if (IsBundleIndex(selectedIndex))
+                    DrawBundleDetails(b, GetBundleAt(selectedIndex));
+
+                if (!string.IsNullOrEmpty(statusMessage))
+                {
+                    Color msgColor = statusIsError ? Color.Red : Color.LimeGreen;
+                    Vector2 msgSize = Game1.smallFont.MeasureString(statusMessage);
+                    b.DrawString(Game1.smallFont, statusMessage,
+                        new Vector2(rightPanelRect.X + (rightPanelRect.Width - (int)msgSize.X) / 2, purchaseButton.bounds.Y - (int)msgSize.Y - 8), msgColor);
+                }
+            }
 
             if (scrollOffset > 0) upArrow.draw(b);
             if (scrollOffset + maxVisibleRows < TotalEntries) downArrow.draw(b);
-
-            if (!string.IsNullOrEmpty(statusMessage))
-            {
-                Color msgColor = statusIsError ? Color.Red : Color.LimeGreen;
-                Vector2 msgSize = Game1.smallFont.MeasureString(statusMessage);
-                b.DrawString(Game1.smallFont, statusMessage,
-                    new Vector2(rightPanelRect.X + (rightPanelRect.Width - (int)msgSize.X) / 2, purchaseButton.bounds.Y - (int)msgSize.Y - 8), msgColor);
-            }
 
             drawMouse(b);
         }
@@ -452,6 +487,111 @@ namespace ZoneLockChallenge
         private void DrawPanelBackground(SpriteBatch b, Rectangle rect)
         {
             drawTextureBox(b, Game1.mouseCursors, new Rectangle(384, 373, 18, 18), rect.X, rect.Y, rect.Width, rect.Height, Color.White, 4f, drawShadow: false);
+        }
+
+        private void DrawTab(SpriteBatch b, Rectangle rect, string label, bool active)
+        {
+            Color bg = active ? Color.White : Color.Gray * 0.6f;
+            drawTextureBox(b, Game1.mouseCursors, new Rectangle(384, 373, 18, 18), rect.X, rect.Y, rect.Width, rect.Height, bg, 4f, drawShadow: false);
+            Vector2 textSize = Game1.smallFont.MeasureString(label);
+            b.DrawString(Game1.smallFont, label,
+                new Vector2(rect.X + (rect.Width - textSize.X) / 2, rect.Y + (rect.Height - textSize.Y) / 2),
+                active ? Color.SaddleBrown : Color.DarkGray);
+        }
+
+        private void DrawRunLog(SpriteBatch b)
+        {
+            int x = rightPanelRect.X + Padding;
+            int y = rightPanelRect.Y + Padding;
+            int contentWidth = rightPanelRect.Width - Padding * 2;
+
+            b.DrawString(Game1.dialogueFont, "Run Log", new Vector2(x, y), Color.SaddleBrown);
+            y += 44;
+
+            int totalGold = stateManager.GetTotalGoldSpent();
+            int zonesUnlocked = 0;
+            int bundlesCompleted = 0;
+            var log = stateManager.GetRunLog();
+            var playerNames = new HashSet<string>();
+            foreach (var entry in log)
+            {
+                playerNames.Add(entry.PlayerName);
+                if (entry.EventType == "zone_unlock") zonesUnlocked++;
+                if (entry.EventType == "bundle_complete") bundlesCompleted++;
+            }
+
+            b.DrawString(Game1.smallFont, $"Total gold spent: {totalGold:N0}g", new Vector2(x, y), Color.DarkSlateGray);
+            y += 24;
+            b.DrawString(Game1.smallFont, $"Zones unlocked: {zonesUnlocked}  |  Bundles completed: {bundlesCompleted}", new Vector2(x, y), Color.DarkSlateGray);
+            y += 24;
+
+            foreach (var name in playerNames)
+            {
+                int pGold = stateManager.GetPlayerGoldSpent(name);
+                b.DrawString(Game1.smallFont, $"  {name}: {pGold:N0}g", new Vector2(x, y), Color.DarkSlateGray);
+                y += 22;
+            }
+
+            y += 8;
+            b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, contentWidth, 2), Color.SaddleBrown * 0.5f);
+            y += 10;
+
+            int rowH = 28;
+            int maxVisible = (rightPanelRect.Bottom - Padding - y) / rowH;
+            if (maxVisible < 1) maxVisible = 1;
+
+            if (log.Count == 0)
+            {
+                b.DrawString(Game1.smallFont, "No events yet.", new Vector2(x, y), Color.Gray);
+                return;
+            }
+
+            for (int i = 0; i < maxVisible; i++)
+            {
+                int idx = logScrollOffset + i;
+                if (idx >= log.Count) break;
+                var entry = log[idx];
+
+                string icon;
+                Color iconColor;
+                switch (entry.EventType)
+                {
+                    case "zone_unlock": icon = "+"; iconColor = Color.LimeGreen; break;
+                    case "ticket_purchase": icon = "T"; iconColor = Color.Gold; break;
+                    case "bundle_complete": icon = "*"; iconColor = Color.Orange; break;
+                    case "contribution": icon = "$"; iconColor = Color.CornflowerBlue; break;
+                    default: icon = "-"; iconColor = Color.Gray; break;
+                }
+
+                string season = entry.Season != null
+                    ? char.ToUpper(entry.Season[0]) + entry.Season.Substring(1)
+                    : "?";
+                string dateStr = $"Y{entry.Year} {season} {entry.Day}";
+
+                string desc = entry.EventType switch
+                {
+                    "zone_unlock" => $"{entry.PlayerName} unlocked {entry.TargetName}",
+                    "ticket_purchase" => $"{entry.PlayerName} bought {entry.TargetName} ticket",
+                    "bundle_complete" => $"{entry.PlayerName} completed {entry.TargetName}",
+                    "contribution" => $"{entry.PlayerName} contributed {entry.GoldAmount:N0}g to {entry.TargetName}",
+                    _ => $"{entry.PlayerName}: {entry.TargetName}"
+                };
+
+                b.DrawString(Game1.smallFont, icon, new Vector2(x, y), iconColor);
+                b.DrawString(Game1.smallFont, dateStr, new Vector2(x + 20, y), Color.Gray);
+                float dateWidth = Game1.smallFont.MeasureString(dateStr).X;
+                b.DrawString(Game1.smallFont, $" — {desc}", new Vector2(x + 20 + dateWidth, y), Color.DarkSlateGray);
+                y += rowH;
+            }
+
+            if (logScrollOffset > 0)
+            {
+                b.DrawString(Game1.smallFont, "^ scroll up ^", new Vector2(x + contentWidth / 2 - 40, rightPanelRect.Y + Padding + 40), Color.Gray * 0.6f);
+            }
+            if (logScrollOffset + maxVisible < log.Count)
+            {
+                b.DrawString(Game1.smallFont, "v scroll down v", new Vector2(x + contentWidth / 2 - 48, rightPanelRect.Bottom - Padding - 16), Color.Gray * 0.6f);
+            }
         }
 
         private void DrawZoneList(SpriteBatch b)

@@ -189,6 +189,17 @@ namespace ZoneLockChallenge
         public bool IsCompleted { get; set; }
     }
 
+    public class RunLogEntry
+    {
+        public int Day { get; set; }
+        public string Season { get; set; }
+        public int Year { get; set; }
+        public string EventType { get; set; }
+        public string PlayerName { get; set; }
+        public string TargetName { get; set; }
+        public int GoldAmount { get; set; }
+    }
+
     public class MinecartConfig
     {
         public bool Enabled { get; set; } = true;

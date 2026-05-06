@@ -234,12 +234,12 @@ namespace ZoneLockChallenge
             return zone.Items;
         }
 
-        /// <summary>Get the rewards for a zone (from override data; empty if none configured).</summary>
+        /// <summary>Get the rewards for a zone (override, then config default).</summary>
         public List<ItemCost> GetRewards(ZoneDefinition zone)
         {
             if (State.ZoneOverrides.TryGetValue(zone.ZoneId, out var ov) && ov.Rewards != null)
                 return ov.Rewards;
-            return new List<ItemCost>();
+            return zone.Rewards;
         }
 
         public void SetZoneOverride(string zoneId, ZoneConfigOverride zoneOverride)

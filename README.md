@@ -64,18 +64,18 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 
 ## Default Zone Setup
 
-| Zone              | Type      | Gold Cost | Items Required                | Requires     | Skill Req         |
-|-------------------|-----------|-----------|-------------------------------|--------------|-------------------|
-| Backwoods         | Permanent | 1,000g    | —                             | —            | —                 |
-| Bus Stop          | Permanent | 2,000g    | —                             | —            | —                 |
-| Cindersap Forest  | Permanent | 5,000g    | —                             | —            | —                 |
-| Pelican Town      | **Ticket**| 5,000g/day| —                             | —            | —                 |
-| The Beach         | Permanent | 7,500g    | —                             | —            | —                 |
-| The Mountain      | Permanent | 10,000g   | 100 Wood, 100 Stone           | —            | —                 |
-| The Mines         | Permanent | 15,000g   | 5 Copper Bars                 | Mountain     | Mining 5 (coll.)  |
-| Railroad & Spa    | Permanent | 12,000g   | —                             | Mountain     | —                 |
-| Calico Desert     | Permanent | 25,000g   | 5 Iridium Bars                | Bus Stop     | —                 |
-| Ginger Island     | Permanent | 50,000g   | 10 Iridium Bars, 5 Batteries  | Beach        | —                 |
+| Zone              | Type      | Gold Cost | Items Required           | Rewards         | Requires     | Skill Req         |
+|-------------------|-----------|-----------|--------------------------|-----------------|--------------|-------------------|
+| Backwoods         | Permanent | 500g      | —                        | Training Rod    | —            | —                 |
+| Bus Stop          | Permanent | 1,000g    | —                        | —               | —            | —                 |
+| Pelican Town      | **Ticket**| 2,000g/day| —                        | —               | —            | —                 |
+| Cindersap Forest  | Permanent | 3,000g    | —                        | —               | —            | —                 |
+| The Beach         | Permanent | 5,000g    | —                        | Fiberglass Rod  | —            | —                 |
+| The Mountain      | Permanent | 8,000g    | 50 Wood, 50 Stone        | —               | —            | —                 |
+| The Mines         | Permanent | 12,000g   | 5 Copper Bars            | —               | Mountain     | Mining 5 (coll.)  |
+| Railroad & Spa    | Permanent | 10,000g   | —                        | —               | Mountain     | —                 |
+| Calico Desert     | Permanent | 20,000g   | 5 Gold Bars              | —               | Bus Stop     | —                 |
+| Ginger Island     | Permanent | 40,000g   | 5 Iridium Bars, 3 Batteries | —            | Beach        | —                 |
 
 All of these are fully configurable in `config.json`. The host can also override costs, items, and rewards in-game via the zone editor.
 

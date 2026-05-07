@@ -512,31 +512,47 @@ namespace ZoneLockChallenge
             int zonesUnlocked = 0;
             int bundlesCompleted = 0;
             var log = stateManager.GetRunLog();
-            var playerNames = new HashSet<string>();
             foreach (var entry in log)
             {
-                playerNames.Add(entry.PlayerName);
                 if (entry.EventType == "zone_unlock") zonesUnlocked++;
                 if (entry.EventType == "bundle_complete") bundlesCompleted++;
             }
 
-            b.DrawString(Game1.smallFont, $"Total gold spent: {totalGold:N0}g", new Vector2(x, y), Color.DarkSlateGray);
-            y += 24;
-            b.DrawString(Game1.smallFont, $"Zones unlocked: {zonesUnlocked}  |  Bundles completed: {bundlesCompleted}", new Vector2(x, y), Color.DarkSlateGray);
-            y += 24;
+            b.DrawString(Game1.smallFont, $"Gold spent: {totalGold:N0}g   Zones: {zonesUnlocked}   Bundles: {bundlesCompleted}", new Vector2(x, y), Color.DarkSlateGray);
+            y += 28;
 
-            foreach (var name in playerNames)
+            var deltas = stateManager.GetAllPlayerDeltas();
+            foreach (var kv in deltas)
             {
-                int pGold = stateManager.GetPlayerGoldSpent(name);
-                b.DrawString(Game1.smallFont, $"  {name}: {pGold:N0}g", new Vector2(x, y), Color.DarkSlateGray);
+                var s = kv.Value;
+                b.DrawString(Game1.smallFont, kv.Key, new Vector2(x, y), Color.SaddleBrown);
                 y += 22;
+
+                int col2 = x + contentWidth / 2;
+                b.DrawString(Game1.smallFont, $"  Seeds sown: {s.SeedsSown}", new Vector2(x, y), Color.DarkSlateGray);
+                b.DrawString(Game1.smallFont, $"Fish caught: {s.FishCaught}", new Vector2(col2, y), Color.DarkSlateGray);
+                y += 20;
+                b.DrawString(Game1.smallFont, $"  Stones mined: {s.StonesSmashed}", new Vector2(x, y), Color.DarkSlateGray);
+                b.DrawString(Game1.smallFont, $"Stumps chopped: {s.StumpsChopped}", new Vector2(col2, y), Color.DarkSlateGray);
+                y += 20;
+                b.DrawString(Game1.smallFont, $"  Monsters slain: {s.MonstersKilled}", new Vector2(x, y), Color.DarkSlateGray);
+                b.DrawString(Game1.smallFont, $"Items shipped: {s.ItemsShipped}", new Vector2(col2, y), Color.DarkSlateGray);
+                y += 20;
+                b.DrawString(Game1.smallFont, $"  Cooked: {s.ItemsCooked}", new Vector2(x, y), Color.DarkSlateGray);
+                b.DrawString(Game1.smallFont, $"Crafted: {s.ItemsCrafted}", new Vector2(col2, y), Color.DarkSlateGray);
+                y += 24;
             }
 
-            y += 8;
+            if (deltas.Count == 0)
+            {
+                b.DrawString(Game1.smallFont, "Stats will appear after the first day.", new Vector2(x, y), Color.Gray);
+                y += 24;
+            }
+
             b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, contentWidth, 2), Color.SaddleBrown * 0.5f);
             y += 10;
 
-            int rowH = 28;
+            int rowH = 26;
             int maxVisible = (rightPanelRect.Bottom - Padding - y) / rowH;
             if (maxVisible < 1) maxVisible = 1;
 
@@ -580,14 +596,14 @@ namespace ZoneLockChallenge
                 b.DrawString(Game1.smallFont, icon, new Vector2(x, y), iconColor);
                 b.DrawString(Game1.smallFont, dateStr, new Vector2(x + 20, y), Color.Gray);
                 float dateWidth = Game1.smallFont.MeasureString(dateStr).X;
-                b.DrawString(Game1.smallFont, $" — {desc}", new Vector2(x + 20 + dateWidth, y), Color.DarkSlateGray);
+                float descMaxW = contentWidth - 20 - dateWidth - 20;
+                string fullDesc = $" — {desc}";
+                string truncDesc = Game1.parseText(fullDesc, Game1.smallFont, (int)descMaxW);
+                if (truncDesc.Contains('\n')) truncDesc = truncDesc.Substring(0, truncDesc.IndexOf('\n'));
+                b.DrawString(Game1.smallFont, truncDesc, new Vector2(x + 20 + dateWidth, y), Color.DarkSlateGray);
                 y += rowH;
             }
 
-            if (logScrollOffset > 0)
-            {
-                b.DrawString(Game1.smallFont, "^ scroll up ^", new Vector2(x + contentWidth / 2 - 40, rightPanelRect.Y + Padding + 40), Color.Gray * 0.6f);
-            }
             if (logScrollOffset + maxVisible < log.Count)
             {
                 b.DrawString(Game1.smallFont, "v scroll down v", new Vector2(x + contentWidth / 2 - 48, rightPanelRect.Bottom - Padding - 16), Color.Gray * 0.6f);

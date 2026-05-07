@@ -70,6 +70,7 @@ namespace ZoneLockChallenge
         private void OnSaveLoaded(object sender, SaveLoadedEventArgs e)
         {
             stateManager.LoadState();
+            stateManager.RecordStatsSnapshot(Game1.player);
             if (!Context.IsMainPlayer)
                 stateManager.RequestSync();
         }
@@ -112,6 +113,8 @@ namespace ZoneLockChallenge
 
         private void OnDayEnding(object sender, DayEndingEventArgs e)
         {
+            stateManager.RecordStatsSnapshot(Game1.player);
+
             if (!config.PreventFriendshipDecay) return;
             friendshipSnapshot.Clear();
             foreach (var kvp in Game1.player.friendshipData.Pairs)

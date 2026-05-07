@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using StardewValley;
 
 namespace ZoneLockChallenge
 {
@@ -198,6 +199,58 @@ namespace ZoneLockChallenge
         public string PlayerName { get; set; }
         public string TargetName { get; set; }
         public int GoldAmount { get; set; }
+    }
+
+    public class PlayerRunStats
+    {
+        public string PlayerName { get; set; }
+        public uint SeedsSown { get; set; }
+        public uint ItemsShipped { get; set; }
+        public uint FishCaught { get; set; }
+        public uint StonesSmashed { get; set; }
+        public uint StumpsChopped { get; set; }
+        public uint MonstersKilled { get; set; }
+        public uint GeodesCracked { get; set; }
+        public uint ItemsCooked { get; set; }
+        public uint ItemsCrafted { get; set; }
+        public uint StepsTaken { get; set; }
+
+        public static PlayerRunStats FromFarmer(Farmer farmer)
+        {
+            return new PlayerRunStats
+            {
+                PlayerName = farmer.Name,
+                SeedsSown = farmer.stats.SeedsSown,
+                ItemsShipped = farmer.stats.ItemsShipped,
+                FishCaught = farmer.stats.FishCaught,
+                StonesSmashed = farmer.stats.StonesSmashed,
+                StumpsChopped = farmer.stats.StumpsChopped,
+                MonstersKilled = farmer.stats.MonstersKilled,
+                GeodesCracked = farmer.stats.GeodesCracked,
+                ItemsCooked = farmer.stats.ItemsCooked,
+                ItemsCrafted = farmer.stats.ItemsCrafted,
+                StepsTaken = farmer.stats.StepsTaken
+            };
+        }
+
+        public PlayerRunStats Delta(PlayerRunStats baseline)
+        {
+            if (baseline == null) return this;
+            return new PlayerRunStats
+            {
+                PlayerName = PlayerName,
+                SeedsSown = SeedsSown - baseline.SeedsSown,
+                ItemsShipped = ItemsShipped - baseline.ItemsShipped,
+                FishCaught = FishCaught - baseline.FishCaught,
+                StonesSmashed = StonesSmashed - baseline.StonesSmashed,
+                StumpsChopped = StumpsChopped - baseline.StumpsChopped,
+                MonstersKilled = MonstersKilled - baseline.MonstersKilled,
+                GeodesCracked = GeodesCracked - baseline.GeodesCracked,
+                ItemsCooked = ItemsCooked - baseline.ItemsCooked,
+                ItemsCrafted = ItemsCrafted - baseline.ItemsCrafted,
+                StepsTaken = StepsTaken - baseline.StepsTaken
+            };
+        }
     }
 
     public class MinecartConfig

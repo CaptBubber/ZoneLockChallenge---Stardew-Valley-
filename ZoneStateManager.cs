@@ -23,6 +23,8 @@ namespace ZoneLockChallenge
         /// <summary>Gold pooled toward zone unlocks: zoneId -> (farmerId -> gold contributed).</summary>
         public Dictionary<string, Dictionary<long, int>> ZoneContributions { get; set; } = new();
         public List<RunLogEntry> RunLog { get; set; } = new();
+        public Dictionary<long, PlayerRunStats> StatsBaseline { get; set; } = new();
+        public Dictionary<long, PlayerRunStats> StatsLatest { get; set; } = new();
     }
 
     public class ZoneSyncMessage
@@ -36,6 +38,14 @@ namespace ZoneLockChallenge
         public List<CustomBundle> CustomBundles { get; set; } = new();
         public Dictionary<string, Dictionary<long, int>> ZoneContributions { get; set; } = new();
         public List<RunLogEntry> RunLog { get; set; } = new();
+        public Dictionary<long, PlayerRunStats> StatsBaseline { get; set; } = new();
+        public Dictionary<long, PlayerRunStats> StatsLatest { get; set; } = new();
+    }
+
+    public class StatsSnapshotMessage
+    {
+        public long FarmerId { get; set; }
+        public PlayerRunStats Stats { get; set; }
     }
 
     public class ZonePurchaseRequest
@@ -75,6 +85,7 @@ namespace ZoneLockChallenge
         private const string NotificationType = "ZoneLockChallenge_Notification";
         private const string ContributeRequestType = "ZoneLockChallenge_ContributeReq";
         private const string ContributeResponseType = "ZoneLockChallenge_ContributeResp";
+        private const string StatsSnapshotType = "ZoneLockChallenge_StatsSnapshot";
 
         private readonly IModHelper helper;
         private readonly IMonitor monitor;
@@ -157,6 +168,36 @@ namespace ZoneLockChallenge
                 TargetName = targetName,
                 GoldAmount = goldAmount
             });
+        }
+
+        public void RecordStatsSnapshot(Farmer farmer)
+        {
+            long id = farmer.UniqueMultiplayerID;
+            var snapshot = PlayerRunStats.FromFarmer(farmer);
+
+            if (Context.IsMainPlayer)
+            {
+                if (!State.StatsBaseline.ContainsKey(id))
+                    State.StatsBaseline[id] = snapshot;
+                State.StatsLatest[id] = snapshot;
+            }
+            else
+            {
+                var msg = new StatsSnapshotMessage { FarmerId = id, Stats = snapshot };
+                helper.Multiplayer.SendMessage(msg, StatsSnapshotType, modIDs: new[] { helper.ModRegistry.ModID });
+            }
+        }
+
+        public Dictionary<string, PlayerRunStats> GetAllPlayerDeltas()
+        {
+            var result = new Dictionary<string, PlayerRunStats>();
+            foreach (var kv in State.StatsLatest)
+            {
+                State.StatsBaseline.TryGetValue(kv.Key, out var baseline);
+                var delta = kv.Value.Delta(baseline);
+                result[delta.PlayerName ?? $"Player {kv.Key}"] = delta;
+            }
+            return result;
         }
 
         public bool IsZoneAccessible(string zoneId, long farmerId)
@@ -683,7 +724,9 @@ namespace ZoneLockChallenge
                     Day = e.Day, Season = e.Season, Year = e.Year,
                     EventType = e.EventType, PlayerName = e.PlayerName,
                     TargetName = e.TargetName, GoldAmount = e.GoldAmount
-                }).ToList()
+                }).ToList(),
+                StatsBaseline = new Dictionary<long, PlayerRunStats>(State.StatsBaseline),
+                StatsLatest = new Dictionary<long, PlayerRunStats>(State.StatsLatest)
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -729,6 +772,8 @@ namespace ZoneLockChallenge
                 State.CustomBundles = sync.CustomBundles ?? new List<CustomBundle>();
                 State.ZoneContributions = sync.ZoneContributions ?? new Dictionary<string, Dictionary<long, int>>();
                 State.RunLog = sync.RunLog ?? new List<RunLogEntry>();
+                State.StatsBaseline = sync.StatsBaseline ?? new Dictionary<long, PlayerRunStats>();
+                State.StatsLatest = sync.StatsLatest ?? new Dictionary<long, PlayerRunStats>();
                 OnStateChanged?.Invoke();
             }
 
@@ -811,6 +856,14 @@ namespace ZoneLockChallenge
                 if (response.Success)
                     Game1.player.Money -= response.ScaledCost;
                 OnPurchaseResponse?.Invoke(response);
+            }
+
+            if (e.Type == StatsSnapshotType && Context.IsMainPlayer)
+            {
+                var msg = e.ReadAs<StatsSnapshotMessage>();
+                if (!State.StatsBaseline.ContainsKey(msg.FarmerId))
+                    State.StatsBaseline[msg.FarmerId] = msg.Stats;
+                State.StatsLatest[msg.FarmerId] = msg.Stats;
             }
 
             if (e.Type == NotificationType && !Context.IsMainPlayer)

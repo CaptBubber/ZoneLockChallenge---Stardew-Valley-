@@ -62,6 +62,25 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 - Configurable via the in-game zone editor or `config.json` overrides
 - Items are added to inventory, or dropped as debris if inventory is full
 
+### Run Log
+- Open the Zone Overview menu and click the **Run Log** tab
+- **Event timeline** — every zone unlock, ticket purchase, custom bundle completion, and group contribution is logged with the in-game date and the player responsible
+- **Summary stats** — total gold spent on unlocks, number of zones unlocked, and number of bundles completed
+- **Per-player activity stats** — tracks seeds sown, fish caught, stones mined, stumps chopped, monsters slain, items shipped, items cooked, and items crafted since the run began (baselines are snapshot when the save first loads)
+- Scrollable timeline supports mouse-wheel scrolling for long runs
+
+### Content Patcher Support
+The mod exposes four editable content assets via SMAPI's Content API. If [Content Patcher](https://www.nexusmods.com/stardewvalley/mods/1915) is installed, packs can override zone data, rewards, mine gates, and the spritesheet without recompiling the mod:
+
+| Asset Path | Type | Purpose |
+|---|---|---|
+| `Mods/ZoneLockChallenge/Sprites` | Image | 64x16 spritesheet (plate sprites, sign, lock icon) |
+| `Mods/ZoneLockChallenge/ZoneData` | Dictionary | Per-zone display name, cost, items, prerequisites, plate position |
+| `Mods/ZoneLockChallenge/Rewards` | Dictionary | Per-zone reward item lists |
+| `Mods/ZoneLockChallenge/MineGates` | List | Mine floor gate definitions |
+
+Priority order: in-game host overrides (saved in the host's save) > Content Patcher edits > `config.json` defaults. The shipped `assets/sprites.png` contains hand-drawn pixel art (gold medallion, blue ticket, wooden arrow sign, red padlock).
+
 ## Default Zone Setup
 
 | Zone              | Type      | Gold Cost | Items Required           | Rewards         | Requires     | Skill Req         |
@@ -204,6 +223,19 @@ An optional `SecondaryBeachBypass` with the same structure (but `Enabled: false`
 | `zlc_unlock <ZoneId>` | Manually unlock a zone permanently (bypasses cost/items). Use `zlc_unlock list` to see all zones and their status. Host only. |
 | `zlc_lock <ZoneId>` | Manually re-lock a previously unlocked zone. Use `zlc_lock list` to see all zones and their status. Host only. |
 
+## Spritesheet Layout
+
+`assets/sprites.png` is a 64x16 image with four 16x16 sprites laid out horizontally. Content Patcher packs replacing `Mods/ZoneLockChallenge/Sprites` should preserve this layout:
+
+| Source Rect | Sprite | Used For |
+|---|---|---|
+| `(0, 0, 16, 16)` | Gold medallion | Permanent zone plates |
+| `(16, 0, 16, 16)` | Blue ticket | Daily-ticket zone plates |
+| `(32, 0, 16, 16)` | Wooden arrow sign | Beach minecart / bypass warp signs |
+| `(48, 0, 16, 16)` | Red padlock | Reserved (not currently drawn in-game) |
+
+To regenerate the default spritesheet, run `python3 generate_sprites.py` (requires Pillow).
+
 ## Troubleshooting
 
 - **"Zone Board doesn't open"**: Make sure no other menu is open. Check the SMAPI console for key binding conflicts.
@@ -217,7 +249,8 @@ An optional `SecondaryBeachBypass` with the same structure (but `Enabled: false`
 - Festival warps bypass zone locks intentionally — players can attend all festivals even in locked zones.
 - Warp totems and the return scepter are caught by the warp interceptor.
 - If you remove a zone from the config after unlocking it, locations in that zone become freely accessible (since they no longer match any zone definition).
-- In-game zone overrides (costs, items, rewards, plate positions, zone order, mine gates) are stored in the host's save data. Changing `config.json` only affects defaults — overrides take precedence.
+- Override priority: save-data overrides (host's in-game edits) > Content Patcher edits > `config.json` defaults. Changing `config.json` only affects the bottom layer.
+- Run Log stat baselines are taken when a save is first loaded with this mod. Activity from prior days won't be reflected in the totals.
 
 ## License
 

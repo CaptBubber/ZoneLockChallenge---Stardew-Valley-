@@ -22,6 +22,9 @@ namespace ZoneLockChallenge
         public List<CustomBundle> CustomBundles { get; set; } = new();
         /// <summary>Gold pooled toward zone unlocks: zoneId -> (farmerId -> gold contributed).</summary>
         public Dictionary<string, Dictionary<long, int>> ZoneContributions { get; set; } = new();
+        public List<RunLogEntry> RunLog { get; set; } = new();
+        public Dictionary<long, PlayerRunStats> StatsBaseline { get; set; } = new();
+        public Dictionary<long, PlayerRunStats> StatsLatest { get; set; } = new();
     }
 
     public class ZoneSyncMessage
@@ -34,6 +37,15 @@ namespace ZoneLockChallenge
         public List<MineLevelGate> MineLevelGateOverrides { get; set; }
         public List<CustomBundle> CustomBundles { get; set; } = new();
         public Dictionary<string, Dictionary<long, int>> ZoneContributions { get; set; } = new();
+        public List<RunLogEntry> RunLog { get; set; } = new();
+        public Dictionary<long, PlayerRunStats> StatsBaseline { get; set; } = new();
+        public Dictionary<long, PlayerRunStats> StatsLatest { get; set; } = new();
+    }
+
+    public class StatsSnapshotMessage
+    {
+        public long FarmerId { get; set; }
+        public PlayerRunStats Stats { get; set; }
     }
 
     public class ZonePurchaseRequest
@@ -73,10 +85,12 @@ namespace ZoneLockChallenge
         private const string NotificationType = "ZoneLockChallenge_Notification";
         private const string ContributeRequestType = "ZoneLockChallenge_ContributeReq";
         private const string ContributeResponseType = "ZoneLockChallenge_ContributeResp";
+        private const string StatsSnapshotType = "ZoneLockChallenge_StatsSnapshot";
 
         private readonly IModHelper helper;
         private readonly IMonitor monitor;
         private readonly ModConfig config;
+        private readonly ContentProvider contentProvider;
 
         public ZoneSaveData State { get; private set; } = new();
 
@@ -84,10 +98,11 @@ namespace ZoneLockChallenge
         public Action OnStateChanged;
         public Action<ZonePurchaseResponse> OnPurchaseResponse;
 
-        public ZoneStateManager(IModHelper helper, IMonitor monitor, ModConfig config)
+        public ZoneStateManager(IModHelper helper, IMonitor monitor, ModConfig config, ContentProvider contentProvider = null)
         {
             this.helper = helper;
             this.monitor = monitor;
+            this.contentProvider = contentProvider;
             this.config = config;
             helper.Events.Multiplayer.ModMessageReceived += OnModMessageReceived;
         }
@@ -120,6 +135,71 @@ namespace ZoneLockChallenge
             var notification = new GlobalNotification { Message = message };
             helper.Multiplayer.SendMessage(notification, NotificationType, modIDs: new[] { helper.ModRegistry.ModID });
             Game1.addHUDMessage(new HUDMessage(message, HUDMessage.newQuest_type));
+        }
+
+        public List<RunLogEntry> GetRunLog() => State.RunLog;
+
+        public int GetTotalGoldSpent()
+        {
+            int total = 0;
+            foreach (var entry in State.RunLog)
+                if (entry.EventType == "zone_unlock" || entry.EventType == "ticket_purchase" || entry.EventType == "bundle_complete" || entry.EventType == "contribution")
+                    total += entry.GoldAmount;
+            return total;
+        }
+
+        public int GetPlayerGoldSpent(string playerName)
+        {
+            int total = 0;
+            foreach (var entry in State.RunLog)
+                if (entry.PlayerName == playerName && entry.GoldAmount > 0)
+                    total += entry.GoldAmount;
+            return total;
+        }
+
+        private void AddLogEntry(string eventType, string playerName, string targetName, int goldAmount = 0)
+        {
+            if (!Context.IsMainPlayer) return;
+            State.RunLog.Add(new RunLogEntry
+            {
+                Day = Game1.dayOfMonth,
+                Season = Game1.currentSeason,
+                Year = Game1.year,
+                EventType = eventType,
+                PlayerName = playerName,
+                TargetName = targetName,
+                GoldAmount = goldAmount
+            });
+        }
+
+        public void RecordStatsSnapshot(Farmer farmer)
+        {
+            long id = farmer.UniqueMultiplayerID;
+            var snapshot = PlayerRunStats.FromFarmer(farmer);
+
+            if (Context.IsMainPlayer)
+            {
+                if (!State.StatsBaseline.ContainsKey(id))
+                    State.StatsBaseline[id] = snapshot;
+                State.StatsLatest[id] = snapshot;
+            }
+            else
+            {
+                var msg = new StatsSnapshotMessage { FarmerId = id, Stats = snapshot };
+                helper.Multiplayer.SendMessage(msg, StatsSnapshotType, modIDs: new[] { helper.ModRegistry.ModID });
+            }
+        }
+
+        public Dictionary<string, PlayerRunStats> GetAllPlayerDeltas()
+        {
+            var result = new Dictionary<string, PlayerRunStats>();
+            foreach (var kv in State.StatsLatest)
+            {
+                State.StatsBaseline.TryGetValue(kv.Key, out var baseline);
+                var delta = kv.Value.Delta(baseline);
+                result[delta.PlayerName ?? $"Player {kv.Key}"] = delta;
+            }
+            return result;
         }
 
         public bool IsZoneAccessible(string zoneId, long farmerId)
@@ -171,10 +251,47 @@ namespace ZoneLockChallenge
             && playerTickets.TryGetValue(farmerId, out int ticketDay)
             && ticketDay == Game1.Date.TotalDays;
 
+        public List<ZoneDefinition> GetContentZones()
+        {
+            if (contentProvider != null)
+            {
+                try
+                {
+                    var data = contentProvider.LoadZoneData();
+                    return data.Select(kv => new ZoneDefinition
+                    {
+                        ZoneId = kv.Key,
+                        DisplayName = kv.Value.DisplayName,
+                        BundleName = kv.Value.BundleName,
+                        Description = kv.Value.Description,
+                        UnlockType = kv.Value.UnlockType,
+                        MoneyCost = kv.Value.MoneyCost,
+                        Items = kv.Value.Items ?? new(),
+                        Rewards = new(),
+                        LocationNames = kv.Value.LocationNames ?? new(),
+                        LocationPrefixes = kv.Value.LocationPrefixes ?? new(),
+                        RequiresZone = kv.Value.RequiresZone,
+                        RequiredSkill = kv.Value.RequiredSkill,
+                        RequiredSkillLevel = kv.Value.RequiredSkillLevel,
+                        Plate = !string.IsNullOrEmpty(kv.Value.PlateLocation)
+                            ? new PlateTile { LocationName = kv.Value.PlateLocation, X = kv.Value.PlateX, Y = kv.Value.PlateY }
+                            : null
+                    }).ToList();
+                }
+                catch { }
+            }
+            return config.Zones;
+        }
+
+        public ZoneDefinition GetZoneById(string zoneId)
+        {
+            return GetContentZones().FirstOrDefault(z => z.ZoneId == zoneId) ?? config.GetZoneById(zoneId);
+        }
+
         public ZoneDefinition GetZoneForLocation(string locationName)
         {
             if (string.IsNullOrEmpty(locationName)) return null;
-            foreach (var zone in config.Zones)
+            foreach (var zone in GetContentZones())
             {
                 if (zone.LocationNames.Contains(locationName))
                     return zone;
@@ -234,12 +351,22 @@ namespace ZoneLockChallenge
             return zone.Items;
         }
 
-        /// <summary>Get the rewards for a zone (from override data; empty if none configured).</summary>
+        /// <summary>Get the rewards for a zone. Priority: save override > content asset > config default.</summary>
         public List<ItemCost> GetRewards(ZoneDefinition zone)
         {
             if (State.ZoneOverrides.TryGetValue(zone.ZoneId, out var ov) && ov.Rewards != null)
                 return ov.Rewards;
-            return new List<ItemCost>();
+            if (contentProvider != null)
+            {
+                try
+                {
+                    var contentRewards = contentProvider.LoadRewards();
+                    if (contentRewards.TryGetValue(zone.ZoneId, out var cr) && cr.Items.Count > 0)
+                        return cr.Items;
+                }
+                catch { }
+            }
+            return zone.Rewards;
         }
 
         public void SetZoneOverride(string zoneId, ZoneConfigOverride zoneOverride)
@@ -256,11 +383,11 @@ namespace ZoneLockChallenge
             var seen = new HashSet<string>();
             foreach (var zoneId in State.ZoneOrder)
             {
-                var zone = config.GetZoneById(zoneId);
+                var zone = GetZoneById(zoneId);
                 if (zone != null && seen.Add(zoneId))
                     result.Add(zone);
             }
-            foreach (var zone in config.Zones)
+            foreach (var zone in GetContentZones())
                 if (seen.Add(zone.ZoneId))
                     result.Add(zone);
             return result;
@@ -295,10 +422,17 @@ namespace ZoneLockChallenge
 
         // ── Mine level gates ─────────────────────────────────────────
 
-        /// <summary>Get the effective mine level gates (overrides from save data, or config defaults).</summary>
+        /// <summary>Get the effective mine level gates. Priority: save override > content asset > config default.</summary>
         public List<MineLevelGate> GetEffectiveMineLevelGates()
         {
-            return State.MineLevelGateOverrides ?? config.MineLevelGates ?? new List<MineLevelGate>();
+            if (State.MineLevelGateOverrides != null)
+                return State.MineLevelGateOverrides;
+            if (contentProvider != null)
+            {
+                try { return contentProvider.LoadMineGates(); }
+                catch { }
+            }
+            return config.MineLevelGates ?? new List<MineLevelGate>();
         }
 
         public void SetMineLevelGateOverrides(List<MineLevelGate> gates)
@@ -388,6 +522,7 @@ namespace ZoneLockChallenge
 
             bundle.IsCompleted = true;
             monitor.Log($"Custom bundle '{bundleId}' completed by {buyer.Name}.", LogLevel.Info);
+            AddLogEntry("bundle_complete", buyer.Name, bundle.DisplayName, cost);
             BroadcastNotification($"{buyer.Name} completed the {bundle.DisplayName} bundle!");
             SaveAndBroadcast();
             OnStateChanged?.Invoke();
@@ -438,7 +573,7 @@ namespace ZoneLockChallenge
         private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount)
         {
             actualAmount = 0;
-            var zone = config.GetZoneById(zoneId);
+            var zone = GetZoneById(zoneId);
             if (zone == null || zone.UnlockType != "permanent") return false;
             if (State.UnlockedZones.Contains(zoneId)) return false;
             if (!ArePrerequisitesMet(zone)) return false;
@@ -461,6 +596,7 @@ namespace ZoneLockChallenge
             contribs[contributor.UniqueMultiplayerID] = GetPlayerContribution(zoneId, contributor.UniqueMultiplayerID) + actual;
 
             int newTotal = GetTotalContributions(zoneId);
+            AddLogEntry("contribution", contributor.Name, zone.DisplayName, actual);
             BroadcastNotification($"{contributor.Name} contributed {actual}g toward {zone.DisplayName} ({newTotal}/{scaledCost})");
 
             if (newTotal >= scaledCost)
@@ -481,6 +617,7 @@ namespace ZoneLockChallenge
                     }
                     State.UnlockedZones.Add(zoneId);
                     State.ZoneContributions.Remove(zoneId);
+                    AddLogEntry("zone_unlock", contributor.Name, zone.DisplayName, 0);
                     BroadcastNotification($"{zone.DisplayName} has been unlocked!");
                 }
             }
@@ -505,7 +642,7 @@ namespace ZoneLockChallenge
         private bool ExecutePurchase(string zoneId, Farmer buyer, out int scaledCost)
         {
             scaledCost = 0;
-            var zone = config.GetZoneById(zoneId);
+            var zone = GetZoneById(zoneId);
             if (zone == null) return false;
             if (!ArePrerequisitesMet(zone)) return false;
             if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId)) return false;
@@ -536,6 +673,7 @@ namespace ZoneLockChallenge
             {
                 State.UnlockedZones.Add(zoneId);
                 monitor.Log($"Zone '{zoneId}' permanently unlocked by {buyer.Name}.", LogLevel.Info);
+                AddLogEntry("zone_unlock", buyer.Name, zone.DisplayName, scaledCost);
                 BroadcastNotification($"{buyer.Name} unlocked {zone.DisplayName}!");
             }
             else if (zone.UnlockType == "ticket")
@@ -543,6 +681,7 @@ namespace ZoneLockChallenge
                 if (!State.ActiveTickets.ContainsKey(zoneId))
                     State.ActiveTickets[zoneId] = new Dictionary<long, int>();
                 State.ActiveTickets[zoneId][buyer.UniqueMultiplayerID] = Game1.Date.TotalDays;
+                AddLogEntry("ticket_purchase", buyer.Name, zone.DisplayName, scaledCost);
                 monitor.Log($"Ticket for '{zoneId}' purchased by {buyer.Name} (ID {buyer.UniqueMultiplayerID}) for day {Game1.Date.TotalDays}.", LogLevel.Info);
             }
 
@@ -635,7 +774,15 @@ namespace ZoneLockChallenge
                 CustomBundles = bundlesCopy,
                 ZoneContributions = State.ZoneContributions.ToDictionary(
                     kv => kv.Key,
-                    kv => new Dictionary<long, int>(kv.Value))
+                    kv => new Dictionary<long, int>(kv.Value)),
+                RunLog = State.RunLog.Select(e => new RunLogEntry
+                {
+                    Day = e.Day, Season = e.Season, Year = e.Year,
+                    EventType = e.EventType, PlayerName = e.PlayerName,
+                    TargetName = e.TargetName, GoldAmount = e.GoldAmount
+                }).ToList(),
+                StatsBaseline = new Dictionary<long, PlayerRunStats>(State.StatsBaseline),
+                StatsLatest = new Dictionary<long, PlayerRunStats>(State.StatsLatest)
             };
             helper.Multiplayer.SendMessage(message, SyncMessageType, modIDs: new[] { helper.ModRegistry.ModID });
         }
@@ -680,6 +827,9 @@ namespace ZoneLockChallenge
                 State.MineLevelGateOverrides = sync.MineLevelGateOverrides;
                 State.CustomBundles = sync.CustomBundles ?? new List<CustomBundle>();
                 State.ZoneContributions = sync.ZoneContributions ?? new Dictionary<string, Dictionary<long, int>>();
+                State.RunLog = sync.RunLog ?? new List<RunLogEntry>();
+                State.StatsBaseline = sync.StatsBaseline ?? new Dictionary<long, PlayerRunStats>();
+                State.StatsLatest = sync.StatsLatest ?? new Dictionary<long, PlayerRunStats>();
                 OnStateChanged?.Invoke();
             }
 
@@ -690,7 +840,7 @@ namespace ZoneLockChallenge
                 // Use host's authoritative ScaledCost to avoid drift from sync arriving first.
                 if (response.Success)
                 {
-                    var zone = config.GetZoneById(response.ZoneId);
+                    var zone = GetZoneById(response.ZoneId);
                     if (zone != null)
                     {
                         Game1.player.Money -= response.ScaledCost;
@@ -762,6 +912,14 @@ namespace ZoneLockChallenge
                 if (response.Success)
                     Game1.player.Money -= response.ScaledCost;
                 OnPurchaseResponse?.Invoke(response);
+            }
+
+            if (e.Type == StatsSnapshotType && Context.IsMainPlayer)
+            {
+                var msg = e.ReadAs<StatsSnapshotMessage>();
+                if (!State.StatsBaseline.ContainsKey(msg.FarmerId))
+                    State.StatsBaseline[msg.FarmerId] = msg.Stats;
+                State.StatsLatest[msg.FarmerId] = msg.Stats;
             }
 
             if (e.Type == NotificationType && !Context.IsMainPlayer)

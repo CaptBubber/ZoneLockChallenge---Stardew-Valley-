@@ -22,6 +22,8 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 - Collective skill requirements (e.g. Mines requires collective Mining level 5)
 - Cost scaling — each zone unlocked increases the price of remaining zones (configurable percentage)
 - Full multiplayer sync (host-authoritative, farmhands send purchase requests)
+- **Purchase notifications** — when any player unlocks a zone or completes a bundle, all players see a HUD notification (e.g. "Player X unlocked The Beach!")
+- **Group unlock** — in multiplayer, players can pool gold toward a permanent zone unlock instead of one person paying the full cost. A "Contribute Gold" button and progress bar appear for locked permanent zones. The zone auto-unlocks when the pooled total meets the cost (the contributing player who pushes it over must also have any required items)
 
 ### Mine Floor Gating
 - Every 25 mine levels (25, 50, 75, 100) is gated by the group's collective Mining skill level
@@ -39,6 +41,15 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 - In-day friendship changes from gifts, events, and dialogue still apply normally
 - Designed for zone-lock challenge runs where players rarely see most NPCs
 
+### Custom Bundles (Host Only)
+- **Create new bundles** from the Zone Overview menu — click "+ New Bundle" at the bottom of the sidebar
+- **Edit existing bundles** by clicking "Edit Bundle" in the bundle detail panel
+- Set a display name, description, gold cost, required items, and reward items
+- **Item search by name** — when adding items to a bundle, type to search all game items by name (no need to know item IDs). Results show item icons and are sorted by relevance
+- **Delete bundles** from the edit menu
+- Any player can complete a bundle by paying its gold/item cost. Rewards are given on completion
+- Bundles are synced to all players and stored in the host's save data
+
 ### In-Game Zone Editing (Host Only)
 - **Edit Zone**: change gold costs, item requirements, and item rewards from the menu (no config file editing needed)
 - **Move Plate**: click "Move Plate" then click any tile in the world to reposition a zone's plate
@@ -53,18 +64,18 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 
 ## Default Zone Setup
 
-| Zone              | Type      | Gold Cost | Items Required                | Requires     | Skill Req         |
-|-------------------|-----------|-----------|-------------------------------|--------------|-------------------|
-| Backwoods         | Permanent | 1,000g    | —                             | —            | —                 |
-| Bus Stop          | Permanent | 2,000g    | —                             | —            | —                 |
-| Cindersap Forest  | Permanent | 5,000g    | —                             | —            | —                 |
-| Pelican Town      | **Ticket**| 5,000g/day| —                             | —            | —                 |
-| The Beach         | Permanent | 7,500g    | —                             | —            | —                 |
-| The Mountain      | Permanent | 10,000g   | 100 Wood, 100 Stone           | —            | —                 |
-| The Mines         | Permanent | 15,000g   | 5 Copper Bars                 | Mountain     | Mining 5 (coll.)  |
-| Railroad & Spa    | Permanent | 12,000g   | —                             | Mountain     | —                 |
-| Calico Desert     | Permanent | 25,000g   | 5 Iridium Bars                | Bus Stop     | —                 |
-| Ginger Island     | Permanent | 50,000g   | 10 Iridium Bars, 5 Batteries  | Beach        | —                 |
+| Zone              | Type      | Gold Cost | Items Required           | Rewards         | Requires     | Skill Req         |
+|-------------------|-----------|-----------|--------------------------|-----------------|--------------|-------------------|
+| Backwoods         | Permanent | 500g      | —                        | Training Rod    | —            | —                 |
+| Bus Stop          | Permanent | 1,000g    | —                        | —               | —            | —                 |
+| Pelican Town      | **Ticket**| 2,000g/day| —                        | —               | —            | —                 |
+| Cindersap Forest  | Permanent | 3,000g    | —                        | —               | —            | —                 |
+| The Beach         | Permanent | 5,000g    | —                        | Fiberglass Rod  | —            | —                 |
+| The Mountain      | Permanent | 8,000g    | 50 Wood, 50 Stone        | —               | —            | —                 |
+| The Mines         | Permanent | 12,000g   | 5 Copper Bars            | —               | Mountain     | Mining 5 (coll.)  |
+| Railroad & Spa    | Permanent | 10,000g   | —                        | —               | Mountain     | —                 |
+| Calico Desert     | Permanent | 20,000g   | 5 Gold Bars              | —               | Bus Stop     | —                 |
+| Ginger Island     | Permanent | 40,000g   | 5 Iridium Bars, 3 Batteries | —            | Beach        | —                 |
 
 All of these are fully configurable in `config.json`. The host can also override costs, items, and rewards in-game via the zone editor.
 
@@ -105,7 +116,7 @@ Double-click **INSTALL.bat**. It will:
 
 ### Multiplayer Setup
 
-**All players** need the mod installed with the same `config.json`. The host's save stores the unlock state (including any in-game overrides for costs, items, rewards, plate positions, zone order, and mine gates). Farmhands receive synced state automatically.
+**All players** need the mod installed with the same `config.json`. The host's save stores the unlock state (including any in-game overrides for costs, items, rewards, plate positions, zone order, mine gates, custom bundles, and pooled contributions). Farmhands receive synced state automatically.
 
 Easiest approach: have one person set up the mod, then share the entire `ZoneLockChallenge` folder with your friends.
 
@@ -184,6 +195,14 @@ An optional `SecondaryBeachBypass` with the same structure (but `Enabled: false`
 | Diamond         | (O)72        |
 | Prismatic Shard | (O)74        |
 | Fishing Rod     | (T)FishingRod |
+
+## Console Commands (SMAPI)
+
+| Command | Description |
+|---------|-------------|
+| `zlc_moveplate <ZoneId>` | Enter plate placement mode — click any tile in-game to move that zone's plate. Use `zlc_moveplate list` to see zone IDs. Host only. |
+| `zlc_unlock <ZoneId>` | Manually unlock a zone permanently (bypasses cost/items). Use `zlc_unlock list` to see all zones and their status. Host only. |
+| `zlc_lock <ZoneId>` | Manually re-lock a previously unlocked zone. Use `zlc_lock list` to see all zones and their status. Host only. |
 
 ## Troubleshooting
 

@@ -90,6 +90,7 @@ namespace ZoneLockChallenge
         private readonly IModHelper helper;
         private readonly IMonitor monitor;
         private readonly ModConfig config;
+        private readonly ContentProvider contentProvider;
 
         public ZoneSaveData State { get; private set; } = new();
 
@@ -97,10 +98,11 @@ namespace ZoneLockChallenge
         public Action OnStateChanged;
         public Action<ZonePurchaseResponse> OnPurchaseResponse;
 
-        public ZoneStateManager(IModHelper helper, IMonitor monitor, ModConfig config)
+        public ZoneStateManager(IModHelper helper, IMonitor monitor, ModConfig config, ContentProvider contentProvider = null)
         {
             this.helper = helper;
             this.monitor = monitor;
+            this.contentProvider = contentProvider;
             this.config = config;
             helper.Events.Multiplayer.ModMessageReceived += OnModMessageReceived;
         }
@@ -249,10 +251,47 @@ namespace ZoneLockChallenge
             && playerTickets.TryGetValue(farmerId, out int ticketDay)
             && ticketDay == Game1.Date.TotalDays;
 
+        public List<ZoneDefinition> GetContentZones()
+        {
+            if (contentProvider != null)
+            {
+                try
+                {
+                    var data = contentProvider.LoadZoneData();
+                    return data.Select(kv => new ZoneDefinition
+                    {
+                        ZoneId = kv.Key,
+                        DisplayName = kv.Value.DisplayName,
+                        BundleName = kv.Value.BundleName,
+                        Description = kv.Value.Description,
+                        UnlockType = kv.Value.UnlockType,
+                        MoneyCost = kv.Value.MoneyCost,
+                        Items = kv.Value.Items ?? new(),
+                        Rewards = new(),
+                        LocationNames = kv.Value.LocationNames ?? new(),
+                        LocationPrefixes = kv.Value.LocationPrefixes ?? new(),
+                        RequiresZone = kv.Value.RequiresZone,
+                        RequiredSkill = kv.Value.RequiredSkill,
+                        RequiredSkillLevel = kv.Value.RequiredSkillLevel,
+                        Plate = !string.IsNullOrEmpty(kv.Value.PlateLocation)
+                            ? new PlateTile { LocationName = kv.Value.PlateLocation, X = kv.Value.PlateX, Y = kv.Value.PlateY }
+                            : null
+                    }).ToList();
+                }
+                catch { }
+            }
+            return config.Zones;
+        }
+
+        public ZoneDefinition GetZoneById(string zoneId)
+        {
+            return GetContentZones().FirstOrDefault(z => z.ZoneId == zoneId) ?? config.GetZoneById(zoneId);
+        }
+
         public ZoneDefinition GetZoneForLocation(string locationName)
         {
             if (string.IsNullOrEmpty(locationName)) return null;
-            foreach (var zone in config.Zones)
+            foreach (var zone in GetContentZones())
             {
                 if (zone.LocationNames.Contains(locationName))
                     return zone;
@@ -312,11 +351,21 @@ namespace ZoneLockChallenge
             return zone.Items;
         }
 
-        /// <summary>Get the rewards for a zone (override, then config default).</summary>
+        /// <summary>Get the rewards for a zone. Priority: save override > content asset > config default.</summary>
         public List<ItemCost> GetRewards(ZoneDefinition zone)
         {
             if (State.ZoneOverrides.TryGetValue(zone.ZoneId, out var ov) && ov.Rewards != null)
                 return ov.Rewards;
+            if (contentProvider != null)
+            {
+                try
+                {
+                    var contentRewards = contentProvider.LoadRewards();
+                    if (contentRewards.TryGetValue(zone.ZoneId, out var cr) && cr.Items.Count > 0)
+                        return cr.Items;
+                }
+                catch { }
+            }
             return zone.Rewards;
         }
 
@@ -334,11 +383,11 @@ namespace ZoneLockChallenge
             var seen = new HashSet<string>();
             foreach (var zoneId in State.ZoneOrder)
             {
-                var zone = config.GetZoneById(zoneId);
+                var zone = GetZoneById(zoneId);
                 if (zone != null && seen.Add(zoneId))
                     result.Add(zone);
             }
-            foreach (var zone in config.Zones)
+            foreach (var zone in GetContentZones())
                 if (seen.Add(zone.ZoneId))
                     result.Add(zone);
             return result;
@@ -373,10 +422,17 @@ namespace ZoneLockChallenge
 
         // ── Mine level gates ─────────────────────────────────────────
 
-        /// <summary>Get the effective mine level gates (overrides from save data, or config defaults).</summary>
+        /// <summary>Get the effective mine level gates. Priority: save override > content asset > config default.</summary>
         public List<MineLevelGate> GetEffectiveMineLevelGates()
         {
-            return State.MineLevelGateOverrides ?? config.MineLevelGates ?? new List<MineLevelGate>();
+            if (State.MineLevelGateOverrides != null)
+                return State.MineLevelGateOverrides;
+            if (contentProvider != null)
+            {
+                try { return contentProvider.LoadMineGates(); }
+                catch { }
+            }
+            return config.MineLevelGates ?? new List<MineLevelGate>();
         }
 
         public void SetMineLevelGateOverrides(List<MineLevelGate> gates)
@@ -517,7 +573,7 @@ namespace ZoneLockChallenge
         private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount)
         {
             actualAmount = 0;
-            var zone = config.GetZoneById(zoneId);
+            var zone = GetZoneById(zoneId);
             if (zone == null || zone.UnlockType != "permanent") return false;
             if (State.UnlockedZones.Contains(zoneId)) return false;
             if (!ArePrerequisitesMet(zone)) return false;
@@ -586,7 +642,7 @@ namespace ZoneLockChallenge
         private bool ExecutePurchase(string zoneId, Farmer buyer, out int scaledCost)
         {
             scaledCost = 0;
-            var zone = config.GetZoneById(zoneId);
+            var zone = GetZoneById(zoneId);
             if (zone == null) return false;
             if (!ArePrerequisitesMet(zone)) return false;
             if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId)) return false;
@@ -784,7 +840,7 @@ namespace ZoneLockChallenge
                 // Use host's authoritative ScaledCost to avoid drift from sync arriving first.
                 if (response.Success)
                 {
-                    var zone = config.GetZoneById(response.ZoneId);
+                    var zone = GetZoneById(response.ZoneId);
                     if (zone != null)
                     {
                         Game1.player.Money -= response.ScaledCost;

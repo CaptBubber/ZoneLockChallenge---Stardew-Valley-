@@ -13,6 +13,7 @@ namespace ZoneLockChallenge
     {
         private ModConfig config;
         private ZoneStateManager stateManager;
+        private ContentProvider contentProvider;
         private bool isWarpingBack;
         private int warpBackFramesLeft;
 
@@ -33,9 +34,9 @@ namespace ZoneLockChallenge
         public override void Entry(IModHelper helper)
         {
             config = helper.ReadConfig<ModConfig>();
-            stateManager = new ZoneStateManager(helper, Monitor, config);
+            contentProvider = new ContentProvider(helper, config);
+            stateManager = new ZoneStateManager(helper, Monitor, config, contentProvider);
 
-            // Refresh plates when state changes (purchase, sync)
             stateManager.OnStateChanged = () => { };
 
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
@@ -49,6 +50,7 @@ namespace ZoneLockChallenge
             helper.Events.Display.RenderedWorld += OnRenderedWorld;
             helper.Events.GameLoop.UpdateTicking += OnUpdateTicking;
             helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
+            helper.Events.Content.AssetsInvalidated += contentProvider.OnAssetInvalidated;
 
             helper.ConsoleCommands.Add("zlc_moveplate",
                 "Move a zone plate to your current cursor tile. Usage: zlc_moveplate <ZoneId>\nUse 'zlc_moveplate list' to see all zone IDs.",
@@ -84,7 +86,7 @@ namespace ZoneLockChallenge
                 : stateManager.GetLocalExpiredTicketZones();
             foreach (var zoneId in expired)
             {
-                var zone = config.GetZoneById(zoneId);
+                var zone = stateManager.GetZoneById(zoneId);
                 if (zone != null)
                     Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
             }
@@ -275,7 +277,7 @@ namespace ZoneLockChallenge
                 // Plate placement mode: place the plate at the clicked tile
                 if (platePlacementZoneId != null)
                 {
-                    var zone = config.GetZoneById(platePlacementZoneId);
+                    var zone = stateManager.GetZoneById(platePlacementZoneId);
                     if (zone != null)
                     {
                         var newPlate = new PlateTile { LocationName = locName, X = tileX, Y = tileY };
@@ -289,8 +291,8 @@ namespace ZoneLockChallenge
                     return;
                 }
 
-                // Check zone plates (use effective plate positions from save data or config)
-                foreach (var zone in config.Zones)
+                // Check zone plates (use effective plate positions from save data or content)
+                foreach (var zone in stateManager.GetContentZones())
                 {
                     var plate = stateManager.GetEffectivePlate(zone);
                     if (plate == null) continue;
@@ -387,7 +389,7 @@ namespace ZoneLockChallenge
             if (args.Length == 0 || args[0].Equals("list", StringComparison.OrdinalIgnoreCase))
             {
                 Monitor.Log("Available zones:", LogLevel.Info);
-                foreach (var zone in config.Zones)
+                foreach (var zone in stateManager.GetContentZones())
                 {
                     var plate = stateManager.GetEffectivePlate(zone);
                     string plateLoc = plate != null ? $"{plate.LocationName} ({plate.X}, {plate.Y})" : "none";
@@ -404,7 +406,7 @@ namespace ZoneLockChallenge
             }
 
             string zoneId = args[0];
-            var targetZone = config.Zones.FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
+            var targetZone = stateManager.GetContentZones().FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
             if (targetZone == null)
             {
                 Monitor.Log($"Unknown zone '{zoneId}'. Use 'zlc_moveplate list' to see valid zone IDs.", LogLevel.Warn);
@@ -427,7 +429,7 @@ namespace ZoneLockChallenge
             }
 
             string zoneId = args[0];
-            var zone = config.Zones.FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
+            var zone = stateManager.GetContentZones().FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
             if (zone == null) { Monitor.Log($"Unknown zone '{zoneId}'. Use 'zlc_unlock list' to see valid zone IDs.", LogLevel.Warn); return; }
 
             if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
@@ -448,7 +450,7 @@ namespace ZoneLockChallenge
             }
 
             string zoneId = args[0];
-            var zone = config.Zones.FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
+            var zone = stateManager.GetContentZones().FirstOrDefault(z => z.ZoneId.Equals(zoneId, StringComparison.OrdinalIgnoreCase));
             if (zone == null) { Monitor.Log($"Unknown zone '{zoneId}'. Use 'zlc_lock list' to see valid zone IDs.", LogLevel.Warn); return; }
 
             if (!stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
@@ -461,7 +463,7 @@ namespace ZoneLockChallenge
         private void LogZoneStatus()
         {
             Monitor.Log("Zone status:", LogLevel.Info);
-            foreach (var zone in config.Zones)
+            foreach (var zone in stateManager.GetContentZones())
             {
                 string status = stateManager.IsZonePermanentlyUnlocked(zone.ZoneId) ? "UNLOCKED" : "LOCKED";
                 Monitor.Log($"  {zone.ZoneId} — {zone.DisplayName} — {status}", LogLevel.Info);
@@ -471,7 +473,7 @@ namespace ZoneLockChallenge
         /// <summary>Called by BundleMenu to open the zone edit menu (host only).</summary>
         private void RequestZoneEdit(string zoneId)
         {
-            var zone = config.GetZoneById(zoneId);
+            var zone = stateManager.GetZoneById(zoneId);
             if (zone == null) return;
             Game1.activeClickableMenu = new ZoneEditMenu(zone, stateManager);
             Monitor.Log($"Opened zone editor for '{zone.ZoneId}'.", LogLevel.Info);
@@ -488,7 +490,7 @@ namespace ZoneLockChallenge
         private void RequestPlatePlacement(string zoneId)
         {
             platePlacementZoneId = zoneId;
-            var zone = config.GetZoneById(zoneId);
+            var zone = stateManager.GetZoneById(zoneId);
             string name = zone?.DisplayName ?? zoneId;
             Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{name}' plate.", HUDMessage.newQuest_type));
             Monitor.Log($"Plate placement mode active for '{zoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);
@@ -503,8 +505,8 @@ namespace ZoneLockChallenge
             string locName = Game1.currentLocation.Name;
             SpriteBatch b = e.SpriteBatch;
 
-            // Draw zone plates in the current location (use effective plate positions)
-            foreach (var zone in config.Zones)
+            // Draw zone plates in the current location
+            foreach (var zone in stateManager.GetContentZones())
             {
                 var plate = stateManager.GetEffectivePlate(zone);
                 if (plate == null) continue;
@@ -545,33 +547,22 @@ namespace ZoneLockChallenge
 
         private void DrawPlateSprite(SpriteBatch b, ZoneDefinition zone, PlateTile plate)
         {
-            // World position of the tile
             Vector2 worldPos = new(plate.X * 64, plate.Y * 64);
-
-            // Convert to screen position
             Vector2 screenPos = Game1.GlobalToLocal(Game1.viewport, worldPos);
-
-            // Gentle hover animation
             float bounce = (float)Math.Sin(plateAnimTimer * 3.0) * 4f;
 
-            // Draw a bundle-style icon (junimo note sprite from cursors: 331, 374, 15, 14)
-            // This is the golden scroll/note icon
             bool isTicketZone = zone.UnlockType == "ticket";
-            Color tint = isTicketZone ? Color.LightGoldenrodYellow : Color.White;
+            var texture = contentProvider.GetSprites();
+            Rectangle srcRect = isTicketZone ? new Rectangle(16, 0, 16, 16) : new Rectangle(0, 0, 16, 16);
 
-            b.Draw(
-                Game1.mouseCursors,
-                new Vector2(screenPos.X + 16, screenPos.Y - 12 + bounce),
-                new Rectangle(331, 374, 15, 14),
-                tint, 0f, Vector2.Zero, 3f, SpriteEffects.None, 0.99f);
+            b.Draw(texture,
+                new Vector2(screenPos.X + 8, screenPos.Y - 16 + bounce),
+                srcRect, Color.White, 0f, Vector2.Zero, 3f, SpriteEffects.None, 0.99f);
 
-            // Draw small label below — use DisplayName so it matches the menu header
             string label = !string.IsNullOrEmpty(zone.DisplayName) ? zone.DisplayName : zone.BundleName;
             Vector2 textSize = Game1.smallFont.MeasureString(label);
-            float textScale = Math.Min(1f, 180f / textSize.X); // scale down long names
+            float textScale = Math.Min(1f, 180f / textSize.X);
             Vector2 textPos = new(screenPos.X + 32 - textSize.X * textScale / 2, screenPos.Y + 40 + bounce);
-
-            // Text shadow
             b.DrawString(Game1.smallFont, label, textPos + new Vector2(1, 1), Color.Black * 0.5f, 0f, Vector2.Zero, textScale, SpriteEffects.None, 0.991f);
             b.DrawString(Game1.smallFont, label, textPos, Color.White, 0f, Vector2.Zero, textScale, SpriteEffects.None, 0.992f);
         }
@@ -582,14 +573,12 @@ namespace ZoneLockChallenge
             Vector2 screenPos = Game1.GlobalToLocal(Game1.viewport, worldPos);
             float bounce = (float)Math.Sin(plateAnimTimer * 2.5 + 1.0) * 3f;
 
-            // Draw a minecart-style icon (using a different cursor sprite: the arrow/warp icon)
-            b.Draw(
-                Game1.mouseCursors,
-                new Vector2(screenPos.X + 16, screenPos.Y - 12 + bounce),
-                new Rectangle(402, 496, 9, 9),
-                Color.LightCyan, 0f, Vector2.Zero, 4f, SpriteEffects.None, 0.99f);
+            var texture = contentProvider.GetSprites();
+            b.Draw(texture,
+                new Vector2(screenPos.X + 8, screenPos.Y - 16 + bounce),
+                new Rectangle(32, 0, 16, 16),
+                Color.White, 0f, Vector2.Zero, 3f, SpriteEffects.None, 0.99f);
 
-            // Label
             string text = $"To {label}";
             Vector2 textSize = Game1.smallFont.MeasureString(text);
             Vector2 textPos = new(screenPos.X + 32 - textSize.X / 2, screenPos.Y + 40 + bounce);

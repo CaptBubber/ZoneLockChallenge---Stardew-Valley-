@@ -89,9 +89,24 @@ namespace ZoneLockChallenge
             stateManager.RecordStatsSnapshot(Game1.player);
             if (!Context.IsMainPlayer)
                 stateManager.RequestSync();
+
+            if (config.PreventFriendshipDecay)
+            {
+                var loaded = Helper.Data.ReadJsonFile<Dictionary<string, int>>(GetFriendshipFilePath());
+                if (loaded != null)
+                    friendshipSnapshot = loaded;
+            }
         }
 
-        private void OnSaving(object sender, SavingEventArgs e) => stateManager.SaveState();
+        private void OnSaving(object sender, SavingEventArgs e)
+        {
+            stateManager.SaveState();
+            if (config.PreventFriendshipDecay && friendshipSnapshot.Count > 0)
+                Helper.Data.WriteJsonFile(GetFriendshipFilePath(), friendshipSnapshot);
+        }
+
+        private string GetFriendshipFilePath() =>
+            $"data/friendship_{Game1.player.UniqueMultiplayerID}.json";
 
         private void OnDayStarted(object sender, DayStartedEventArgs e)
         {
@@ -124,6 +139,7 @@ namespace ZoneLockChallenge
                 if (restored > 0)
                     Monitor.Log($"Restored friendship decay for {restored} NPC(s).", LogLevel.Trace);
                 friendshipSnapshot.Clear();
+                Helper.Data.WriteJsonFile<Dictionary<string, int>>(GetFriendshipFilePath(), null);
             }
         }
 

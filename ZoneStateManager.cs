@@ -228,6 +228,8 @@ namespace ZoneLockChallenge
         {
             if (!Context.IsMainPlayer) return;
             State.UnlockedZones.Remove(zoneId);
+            State.ActiveTickets.Remove(zoneId);
+            State.ZoneContributions.Remove(zoneId);
             SaveAndBroadcast();
             OnStateChanged?.Invoke();
         }
@@ -332,8 +334,9 @@ namespace ZoneLockChallenge
             if (string.IsNullOrEmpty(locationName)) return null;
             foreach (var zone in GetContentZones())
             {
-                if (zone.LocationNames.Contains(locationName))
-                    return zone;
+                foreach (var name in zone.LocationNames)
+                    if (string.Equals(name, locationName, StringComparison.OrdinalIgnoreCase))
+                        return zone;
                 if (zone.LocationPrefixes != null)
                     foreach (var prefix in zone.LocationPrefixes)
                         if (locationName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))

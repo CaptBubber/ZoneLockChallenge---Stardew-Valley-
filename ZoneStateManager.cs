@@ -253,12 +253,13 @@ namespace ZoneLockChallenge
 
         public List<ZoneDefinition> GetContentZones()
         {
+            List<ZoneDefinition> baseZones = null;
             if (contentProvider != null)
             {
                 try
                 {
                     var data = contentProvider.LoadZoneData();
-                    return data.Select(kv => new ZoneDefinition
+                    baseZones = data.Select(kv => new ZoneDefinition
                     {
                         ZoneId = kv.Key,
                         DisplayName = kv.Value.DisplayName,
@@ -280,7 +281,41 @@ namespace ZoneLockChallenge
                 }
                 catch { }
             }
-            return config.Zones;
+            baseZones ??= config.Zones;
+
+            if (State.ZoneOverrides.Count == 0)
+                return baseZones;
+
+            var result = new List<ZoneDefinition>(baseZones.Count);
+            foreach (var zone in baseZones)
+            {
+                if (State.ZoneOverrides.TryGetValue(zone.ZoneId, out var ov)
+                    && (ov.MoneyCost.HasValue || ov.Items != null))
+                {
+                    result.Add(new ZoneDefinition
+                    {
+                        ZoneId = zone.ZoneId,
+                        DisplayName = zone.DisplayName,
+                        BundleName = zone.BundleName,
+                        Description = zone.Description,
+                        UnlockType = zone.UnlockType,
+                        MoneyCost = ov.MoneyCost ?? zone.MoneyCost,
+                        Items = ov.Items ?? zone.Items,
+                        Rewards = zone.Rewards,
+                        LocationNames = zone.LocationNames,
+                        LocationPrefixes = zone.LocationPrefixes,
+                        RequiresZone = zone.RequiresZone,
+                        RequiredSkill = zone.RequiredSkill,
+                        RequiredSkillLevel = zone.RequiredSkillLevel,
+                        Plate = zone.Plate
+                    });
+                }
+                else
+                {
+                    result.Add(zone);
+                }
+            }
+            return result;
         }
 
         public ZoneDefinition GetZoneById(string zoneId)
@@ -577,37 +612,43 @@ namespace ZoneLockChallenge
             if (zone == null || zone.UnlockType != "permanent") return false;
             if (State.UnlockedZones.Contains(zoneId)) return false;
             if (!ArePrerequisitesMet(zone)) return false;
-            if (amount <= 0 || contributor.Money < amount) return false;
 
             int scaledCost = GetScaledMoneyCost(zone);
             int totalSoFar = GetTotalContributions(zoneId);
             int remaining = scaledCost - totalSoFar;
-            if (remaining <= 0) return false;
-
-            int actual = Math.Min(amount, remaining);
-            actualAmount = actual;
             bool isLocal = (contributor.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID);
-            if (isLocal)
-                contributor.Money -= actual;
 
-            if (!State.ZoneContributions.ContainsKey(zoneId))
-                State.ZoneContributions[zoneId] = new Dictionary<long, int>();
-            State.ZoneContributions.TryGetValue(zoneId, out var contribs);
-            contribs[contributor.UniqueMultiplayerID] = GetPlayerContribution(zoneId, contributor.UniqueMultiplayerID) + actual;
+            bool tookGold = false;
+            if (remaining > 0)
+            {
+                if (amount <= 0 || contributor.Money < amount) return false;
 
-            int newTotal = GetTotalContributions(zoneId);
-            AddLogEntry("contribution", contributor.Name, zone.DisplayName, actual);
-            BroadcastNotification($"{contributor.Name} contributed {actual}g toward {zone.DisplayName} ({newTotal}/{scaledCost})");
+                int actual = Math.Min(amount, remaining);
+                actualAmount = actual;
+                if (isLocal)
+                    contributor.Money -= actual;
 
-            if (newTotal >= scaledCost)
+                if (!State.ZoneContributions.ContainsKey(zoneId))
+                    State.ZoneContributions[zoneId] = new Dictionary<long, int>();
+                var contribs = State.ZoneContributions[zoneId];
+                contribs[contributor.UniqueMultiplayerID] = GetPlayerContribution(zoneId, contributor.UniqueMultiplayerID) + actual;
+
+                int newTotal = GetTotalContributions(zoneId);
+                AddLogEntry("contribution", contributor.Name, zone.DisplayName, actual);
+                BroadcastNotification($"{contributor.Name} contributed {actual}g toward {zone.DisplayName} ({newTotal}/{scaledCost})");
+                tookGold = true;
+            }
+
+            // Attempt unlock if pool is funded (just funded by this call, or already at threshold from prior contributions).
+            int currentTotal = GetTotalContributions(zoneId);
+            if (currentTotal >= scaledCost)
             {
                 var effectiveItems = GetEffectiveItems(zone);
-                bool itemsMet = true;
-                foreach (var itemCost in effectiveItems)
-                    if (CountItemInInventory(contributor, itemCost.ItemId) < itemCost.Count)
-                    { itemsMet = false; break; }
+                var missing = effectiveItems
+                    .Where(ic => CountItemInInventory(contributor, ic.ItemId) < ic.Count)
+                    .ToList();
 
-                if (itemsMet)
+                if (missing.Count == 0)
                 {
                     if (isLocal)
                     {
@@ -620,7 +661,20 @@ namespace ZoneLockChallenge
                     AddLogEntry("zone_unlock", contributor.Name, zone.DisplayName, 0);
                     BroadcastNotification($"{zone.DisplayName} has been unlocked!");
                 }
+                else if (tookGold)
+                {
+                    string missingList = string.Join(", ", missing.Select(ic => $"{ic.Count}x {ic.DisplayName}"));
+                    BroadcastNotification($"{zone.DisplayName} is fully funded! Items still needed: {missingList}");
+                }
+                else if (isLocal)
+                {
+                    string missingList = string.Join(", ", missing.Select(ic => $"{ic.Count}x {ic.DisplayName}"));
+                    Game1.addHUDMessage(new HUDMessage($"Pool is funded — bring: {missingList}", HUDMessage.error_type));
+                }
             }
+
+            if (!tookGold && !State.UnlockedZones.Contains(zoneId))
+                return false;
 
             SaveAndBroadcast();
             OnStateChanged?.Invoke();

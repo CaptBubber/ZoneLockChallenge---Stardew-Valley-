@@ -235,7 +235,8 @@ namespace ZoneLockChallenge
 
         public PlayerRunStats Delta(PlayerRunStats baseline)
         {
-            if (baseline == null) return this;
+            if (baseline == null)
+                return new PlayerRunStats { PlayerName = PlayerName };
             return new PlayerRunStats
             {
                 PlayerName = PlayerName,

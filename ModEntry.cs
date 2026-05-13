@@ -37,8 +37,6 @@ namespace ZoneLockChallenge
             contentProvider = new ContentProvider(helper, config);
             stateManager = new ZoneStateManager(helper, Monitor, config, contentProvider);
 
-            stateManager.OnStateChanged = () => { };
-
             helper.Events.GameLoop.GameLaunched += OnGameLaunched;
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
             helper.Events.GameLoop.Saving += OnSaving;
@@ -51,7 +49,6 @@ namespace ZoneLockChallenge
             helper.Events.Display.RenderedWorld += OnRenderedWorld;
             helper.Events.GameLoop.UpdateTicking += OnUpdateTicking;
             helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
-            helper.Events.Content.AssetsInvalidated += contentProvider.OnAssetInvalidated;
 
             helper.ConsoleCommands.Add("zlc_moveplate",
                 "Move a zone plate to your current cursor tile. Usage: zlc_moveplate <ZoneId>\nUse 'zlc_moveplate list' to see all zone IDs.",

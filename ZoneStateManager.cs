@@ -975,6 +975,7 @@ namespace ZoneLockChallenge
                 if (response.Success)
                     Game1.player.Money -= response.ScaledCost;
                 OnPurchaseResponse?.Invoke(response);
+                OnStateChanged?.Invoke();
             }
 
             if (e.Type == StatsSnapshotType && Context.IsMainPlayer)

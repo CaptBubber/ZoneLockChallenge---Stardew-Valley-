@@ -25,6 +25,7 @@ namespace ZoneLockChallenge
             this.helper = helper;
             this.config = config;
             helper.Events.Content.AssetRequested += OnAssetRequested;
+            helper.Events.Content.AssetsInvalidated += OnAssetInvalidated;
         }
 
         public Texture2D GetSprites()
@@ -222,13 +223,40 @@ namespace ZoneLockChallenge
     public class ZoneAccessibleToken
     {
         private readonly ZoneStateManager stateManager;
+        private int cachedUnlockedCount;
+        private int cachedTicketCount;
+        private int cachedDay = -1;
 
         public ZoneAccessibleToken(ZoneStateManager stateManager) => this.stateManager = stateManager;
 
         public bool AllowsInput() => true;
         public bool RequiresInput() => true;
         public bool CanHaveMultipleValues(string input) => false;
-        public bool UpdateContext() => true;
+
+        public bool UpdateContext()
+        {
+            if (!Context.IsWorldReady || Game1.player == null)
+                return false;
+
+            int unlockedCount = stateManager.State.UnlockedZones.Count;
+            int today = Game1.Date.TotalDays;
+
+            int ticketCount = 0;
+            long farmerId = Game1.player.UniqueMultiplayerID;
+            foreach (var kv in stateManager.State.ActiveTickets)
+                if (kv.Value.ContainsKey(farmerId))
+                    ticketCount++;
+
+            if (unlockedCount != cachedUnlockedCount || ticketCount != cachedTicketCount || today != cachedDay)
+            {
+                cachedUnlockedCount = unlockedCount;
+                cachedTicketCount = ticketCount;
+                cachedDay = today;
+                return true;
+            }
+            return false;
+        }
+
         public bool IsReady() => Context.IsWorldReady;
 
         public IEnumerable<string> GetValues(string input)

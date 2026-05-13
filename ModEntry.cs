@@ -327,6 +327,10 @@ namespace ZoneLockChallenge
                 var grabTile = e.Cursor.GrabTile;
                 int tileX = (int)grabTile.X;
                 int tileY = (int)grabTile.Y;
+                // Plates have no collision, so the player can walk onto one. Accept
+                // either the facing tile (GrabTile) or the standing tile.
+                int standX = (int)Game1.player.Tile.X;
+                int standY = (int)Game1.player.Tile.Y;
                 string locName = Game1.currentLocation.Name;
 
                 // Plate placement mode: place the plate at the clicked tile
@@ -352,7 +356,9 @@ namespace ZoneLockChallenge
                     var plate = stateManager.GetEffectivePlate(zone);
                     if (plate == null) continue;
                     if (locName != plate.LocationName) continue;
-                    if (tileX != plate.X || tileY != plate.Y) continue;
+                    bool onPlate = (tileX == plate.X && tileY == plate.Y)
+                                || (standX == plate.X && standY == plate.Y);
+                    if (!onPlate) continue;
 
                     // Plate found!
                     if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))

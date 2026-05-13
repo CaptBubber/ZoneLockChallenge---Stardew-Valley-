@@ -186,7 +186,7 @@ namespace ZoneLockChallenge
             if (zonesTabRect.Contains(x, y) && showRunLog)
             { showRunLog = false; Game1.playSound("smallSelect"); return; }
             if (runLogTabRect.Contains(x, y) && !showRunLog)
-            { showRunLog = true; logScrollOffset = 0; Game1.playSound("smallSelect"); return; }
+            { showRunLog = true; Game1.playSound("smallSelect"); return; }
 
             if (showRunLog) return;
 

@@ -828,8 +828,7 @@ namespace ZoneLockChallenge
                 BundleId = cb.BundleId, DisplayName = cb.DisplayName, Description = cb.Description,
                 MoneyCost = cb.MoneyCost, IsCompleted = cb.IsCompleted,
                 Items = cb.Items?.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList() ?? new(),
-                Rewards = cb.Rewards?.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList() ?? new(),
-                Plate = cb.Plate != null ? new PlateTile { LocationName = cb.Plate.LocationName, X = cb.Plate.X, Y = cb.Plate.Y } : null
+                Rewards = cb.Rewards?.Select(i => new ItemCost { ItemId = i.ItemId, DisplayName = i.DisplayName, Count = i.Count }).ToList() ?? new()
             }).ToList();
             var message = new ZoneSyncMessage
             {

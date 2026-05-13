@@ -81,6 +81,19 @@ The mod exposes four editable content assets via SMAPI's Content API. If [Conten
 
 Priority order: in-game host overrides (saved in the host's save) > Content Patcher edits > `config.json` defaults. The shipped `assets/sprites.png` contains hand-drawn pixel art (gold medallion, blue ticket, wooden arrow sign, red padlock).
 
+#### Content Patcher Tokens
+
+When Content Patcher is installed, the mod registers four tokens that any CP pack can reference in `When` conditions:
+
+| Token | Input | Output | Example |
+|---|---|---|---|
+| `Peter.ZoneLockChallenge/IsZoneUnlocked` | Zone ID (required) | `true` / `false` | `"When": { "Peter.ZoneLockChallenge/IsZoneUnlocked: Mountain": "true" }` |
+| `Peter.ZoneLockChallenge/UnlockedZones` | — | Multi-value: all unlocked zone IDs | `"When": { "Peter.ZoneLockChallenge/UnlockedZones \|contains=Beach": "true" }` |
+| `Peter.ZoneLockChallenge/IsZoneAccessible` | Zone ID (required) | `true` / `false` (includes daily tickets) | `"When": { "Peter.ZoneLockChallenge/IsZoneAccessible: Town": "true" }` |
+| `Peter.ZoneLockChallenge/UnlockedZoneCount` | — | Number (e.g. `"3"`) | `"When": { "Peter.ZoneLockChallenge/UnlockedZoneCount": "{{Range: 5, 10}}" }` |
+
+These tokens let Content Patcher packs (and CP-driven mods like [Farm Type Manager](https://www.nexusmods.com/stardewvalley/mods/3231)) gate spawns, dialogue, map edits, and other content on zone state — no C# dependency required.
+
 ## Default Zone Setup
 
 | Zone              | Type      | Gold Cost | Items Required           | Rewards         | Requires     | Skill Req         |

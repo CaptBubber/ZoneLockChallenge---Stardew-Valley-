@@ -39,6 +39,7 @@ namespace ZoneLockChallenge
 
             stateManager.OnStateChanged = () => { };
 
+            helper.Events.GameLoop.GameLaunched += OnGameLaunched;
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
             helper.Events.GameLoop.Saving += OnSaving;
             helper.Events.GameLoop.DayStarted += OnDayStarted;
@@ -68,6 +69,22 @@ namespace ZoneLockChallenge
         }
 
         // ── Lifecycle ────────────────────────────────────────────────
+
+        private void OnGameLaunched(object sender, GameLaunchedEventArgs e)
+        {
+            var cpApi = Helper.ModRegistry.GetApi<IContentPatcherAPI>("Pathoschild.ContentPatcher");
+            if (cpApi == null)
+            {
+                Monitor.Log("Content Patcher not found — CP tokens will not be available.", LogLevel.Info);
+                return;
+            }
+
+            cpApi.RegisterToken(ModManifest, "IsZoneUnlocked", new ZoneUnlockedToken(stateManager));
+            cpApi.RegisterToken(ModManifest, "UnlockedZones", new UnlockedZonesToken(stateManager));
+            cpApi.RegisterToken(ModManifest, "IsZoneAccessible", new ZoneAccessibleToken(stateManager));
+            cpApi.RegisterToken(ModManifest, "UnlockedZoneCount", new UnlockedZoneCountToken(stateManager));
+            Monitor.Log("Registered 4 Content Patcher tokens (IsZoneUnlocked, UnlockedZones, IsZoneAccessible, UnlockedZoneCount).", LogLevel.Info);
+        }
 
         private void OnSaveLoaded(object sender, SaveLoadedEventArgs e)
         {

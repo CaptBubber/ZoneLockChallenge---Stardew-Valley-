@@ -155,4 +155,112 @@ namespace ZoneLockChallenge
     {
         public List<ItemCost> Items { get; set; } = new();
     }
+
+    public interface IContentPatcherAPI
+    {
+        void RegisterToken(IManifest mod, string name, object token);
+    }
+
+    public class ZoneUnlockedToken
+    {
+        private readonly ZoneStateManager stateManager;
+        private HashSet<string> cached = new();
+
+        public ZoneUnlockedToken(ZoneStateManager stateManager) => this.stateManager = stateManager;
+
+        public bool AllowsInput() => true;
+        public bool RequiresInput() => true;
+        public bool CanHaveMultipleValues(string input) => false;
+
+        public bool UpdateContext()
+        {
+            var current = stateManager.State.UnlockedZones;
+            if (!cached.SetEquals(current))
+            {
+                cached = new HashSet<string>(current);
+                return true;
+            }
+            return false;
+        }
+
+        public bool IsReady() => Context.IsWorldReady;
+
+        public IEnumerable<string> GetValues(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) yield break;
+            yield return cached.Contains(input.Trim()) ? "true" : "false";
+        }
+    }
+
+    public class UnlockedZonesToken
+    {
+        private readonly ZoneStateManager stateManager;
+        private HashSet<string> cached = new();
+
+        public UnlockedZonesToken(ZoneStateManager stateManager) => this.stateManager = stateManager;
+
+        public bool AllowsInput() => false;
+        public bool RequiresInput() => false;
+        public bool CanHaveMultipleValues(string input) => true;
+
+        public bool UpdateContext()
+        {
+            var current = stateManager.State.UnlockedZones;
+            if (!cached.SetEquals(current))
+            {
+                cached = new HashSet<string>(current);
+                return true;
+            }
+            return false;
+        }
+
+        public bool IsReady() => Context.IsWorldReady;
+
+        public IEnumerable<string> GetValues(string input) => cached;
+    }
+
+    public class ZoneAccessibleToken
+    {
+        private readonly ZoneStateManager stateManager;
+
+        public ZoneAccessibleToken(ZoneStateManager stateManager) => this.stateManager = stateManager;
+
+        public bool AllowsInput() => true;
+        public bool RequiresInput() => true;
+        public bool CanHaveMultipleValues(string input) => false;
+        public bool UpdateContext() => true;
+        public bool IsReady() => Context.IsWorldReady;
+
+        public IEnumerable<string> GetValues(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input) || Game1.player == null) yield break;
+            yield return stateManager.IsZoneAccessible(input.Trim(), Game1.player.UniqueMultiplayerID) ? "true" : "false";
+        }
+    }
+
+    public class UnlockedZoneCountToken
+    {
+        private readonly ZoneStateManager stateManager;
+        private int cached;
+
+        public UnlockedZoneCountToken(ZoneStateManager stateManager) => this.stateManager = stateManager;
+
+        public bool AllowsInput() => false;
+        public bool RequiresInput() => false;
+        public bool CanHaveMultipleValues(string input) => false;
+
+        public bool UpdateContext()
+        {
+            int current = stateManager.State.UnlockedZones.Count;
+            if (cached != current) { cached = current; return true; }
+            return false;
+        }
+
+        public bool IsReady() => Context.IsWorldReady;
+
+        public IEnumerable<string> GetValues(string input)
+        {
+            yield return cached.ToString();
+        }
+    }
 }

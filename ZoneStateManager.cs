@@ -732,8 +732,9 @@ namespace ZoneLockChallenge
                 foreach (var itemCost in effectiveItems)
                     RemoveItemsFromInventory(buyer, itemCost.ItemId, itemCost.Count);
 
-                // Give rewards to local buyer
-                GiveRewards(zone);
+                // Rewards only on permanent unlock — not granted on each daily ticket buy
+                if (zone.UnlockType == "permanent")
+                    GiveRewards(zone);
             }
 
             if (zone.UnlockType == "permanent")
@@ -914,7 +915,8 @@ namespace ZoneLockChallenge
                         var effectiveItems = GetEffectiveItems(zone);
                         foreach (var itemCost in effectiveItems)
                             RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
-                        GiveRewards(zone);
+                        if (zone.UnlockType == "permanent")
+                            GiveRewards(zone);
                     }
                 }
 

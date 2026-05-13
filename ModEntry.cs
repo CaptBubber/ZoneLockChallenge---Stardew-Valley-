@@ -165,12 +165,23 @@ namespace ZoneLockChallenge
         /// <summary>Fires BEFORE the game update — save position while player is still in their current location.</summary>
         private void OnUpdateTicking(object sender, UpdateTickingEventArgs e)
         {
-            if (Context.IsWorldReady && !isWarpingBack && Game1.player != null)
+            if (!Context.IsWorldReady || isWarpingBack || Game1.player == null) return;
+
+            string locName = Game1.currentLocation?.Name ?? "Farm";
+
+            // Only record positions in locations the player legitimately has access to,
+            // so a transient stay (e.g. post-death Hospital before block kicks in) doesn't
+            // become the "safe" location to warp back to on the next block.
+            if (!IsFarmLocation(locName))
             {
-                lastSafeLocationName = Game1.currentLocation?.Name ?? "Farm";
-                lastSafeX = (int)Game1.player.Tile.X;
-                lastSafeY = (int)Game1.player.Tile.Y;
+                var zone = stateManager.GetZoneForLocation(locName);
+                if (zone != null && !stateManager.IsZoneAccessible(zone.ZoneId, Game1.player.UniqueMultiplayerID))
+                    return;
             }
+
+            lastSafeLocationName = locName;
+            lastSafeX = (int)Game1.player.Tile.X;
+            lastSafeY = (int)Game1.player.Tile.Y;
         }
 
         /// <summary>Fires AFTER the game update — animation timer and warp flag countdown.</summary>
@@ -200,13 +211,27 @@ namespace ZoneLockChallenge
 
             if (IsFarmLocation(newLocationName)) return;
 
-            // On festival days, allow all warps so players can attend festivals
-            if (Utility.isFestivalDay())
+            // During an active festival event, allow all warps so players can attend.
+            // Using Game1.eventUp instead of isFestivalDay() so the bypass only applies
+            // while the festival is actually happening, not the entire 24h calendar day.
+            if (Utility.isFestivalDay() && Game1.eventUp)
                 return;
 
             long farmerId = Game1.player.UniqueMultiplayerID;
             var zone = stateManager.GetZoneForLocation(newLocationName);
             if (zone == null) return;
+
+            // Hospital is the death-warp destination. If Town is locked and we'd block
+            // entry, the game would re-warp the player back to where they died (still
+            // dead), causing a Hospital ↔ death-location loop. Send them home instead.
+            if (newLocationName == "Hospital" && !stateManager.IsZoneAccessible(zone.ZoneId, farmerId))
+            {
+                Monitor.Log($"Hospital is in a locked zone — sending {Game1.player.Name} to the farm to break the death loop.", LogLevel.Info);
+                isWarpingBack = true;
+                warpBackFramesLeft = 3;
+                Game1.warpFarmer("Farm", 64, 15, false);
+                return;
+            }
 
             // Mine floor gate check: even if the Mine zone is unlocked, specific floors may be gated
             if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId))

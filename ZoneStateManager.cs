@@ -279,7 +279,10 @@ namespace ZoneLockChallenge
                             : null
                     }).ToList();
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    monitor.Log($"Failed to load ZoneData asset, falling back to config: {ex.Message}", LogLevel.Warn);
+                }
             }
             baseZones ??= config.Zones;
 
@@ -399,7 +402,10 @@ namespace ZoneLockChallenge
                     if (contentRewards.TryGetValue(zone.ZoneId, out var cr) && cr.Items.Count > 0)
                         return cr.Items;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    monitor.Log($"Failed to load Rewards asset, falling back to config: {ex.Message}", LogLevel.Warn);
+                }
             }
             return zone.Rewards;
         }
@@ -465,7 +471,10 @@ namespace ZoneLockChallenge
             if (contentProvider != null)
             {
                 try { return contentProvider.LoadMineGates(); }
-                catch { }
+                catch (Exception ex)
+                {
+                    monitor.Log($"Failed to load MineGates asset, falling back to config: {ex.Message}", LogLevel.Warn);
+                }
             }
             return config.MineLevelGates ?? new List<MineLevelGate>();
         }

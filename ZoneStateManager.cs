@@ -60,6 +60,7 @@ namespace ZoneLockChallenge
         public bool Success { get; set; }
         public string Message { get; set; }
         public int ScaledCost { get; set; }
+        public bool UnlockedZone { get; set; }
     }
 
     public class GlobalNotification
@@ -957,11 +958,14 @@ namespace ZoneLockChallenge
                 var contributor = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (contributor != null)
                 {
+                    bool wasUnlocked = State.UnlockedZones.Contains(request.ZoneId);
                     bool success = ExecuteContribution(request.ZoneId, contributor, request.Amount, out int actualCost);
+                    bool nowUnlocked = State.UnlockedZones.Contains(request.ZoneId);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId, Success = success,
                         ScaledCost = actualCost,
+                        UnlockedZone = !wasUnlocked && nowUnlocked,
                         Message = success ? "Contribution received!" : "Could not contribute."
                     };
                     helper.Multiplayer.SendMessage(response, ContributeResponseType,
@@ -973,7 +977,20 @@ namespace ZoneLockChallenge
             {
                 var response = e.ReadAs<ZonePurchaseResponse>();
                 if (response.Success)
+                {
                     Game1.player.Money -= response.ScaledCost;
+                    if (response.UnlockedZone)
+                    {
+                        var zone = GetZoneById(response.ZoneId);
+                        if (zone != null)
+                        {
+                            var effectiveItems = GetEffectiveItems(zone);
+                            foreach (var itemCost in effectiveItems)
+                                RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
+                            GiveRewards(zone);
+                        }
+                    }
+                }
                 OnPurchaseResponse?.Invoke(response);
                 OnStateChanged?.Invoke();
             }

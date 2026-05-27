@@ -503,7 +503,7 @@ namespace ZoneLockChallenge
             return false;
         }
 
-        private bool ExecuteBundlePurchase(string bundleId, Farmer buyer, out int cost)
+        private bool ExecuteBundlePurchase(string bundleId, Farmer buyer, out int cost, bool deferBroadcast = false)
         {
             cost = 0;
             var bundle = State.CustomBundles.FirstOrDefault(b => b.BundleId == bundleId);
@@ -527,8 +527,15 @@ namespace ZoneLockChallenge
             monitor.Log($"Custom bundle '{bundleId}' completed by {buyer.Name}.", LogLevel.Info);
             AddLogEntry("bundle_complete", buyer.Name, bundle.DisplayName, cost);
             BroadcastNotification($"{buyer.Name} completed the {bundle.DisplayName} bundle!");
-            SaveAndBroadcast();
-            OnStateChanged?.Invoke();
+            if (!deferBroadcast)
+            {
+                SaveAndBroadcast();
+                OnStateChanged?.Invoke();
+            }
+            else
+            {
+                SaveState();
+            }
             return true;
         }
 
@@ -566,14 +573,14 @@ namespace ZoneLockChallenge
         public bool TryContribute(string zoneId, Farmer contributor, int amount)
         {
             if (Context.IsMainPlayer)
-                return ExecuteContribution(zoneId, contributor, amount, out _);
+                return ExecuteContribution(zoneId, contributor, amount, out _, out _);
 
             var request = new ContributeRequest { ZoneId = zoneId, FarmerId = contributor.UniqueMultiplayerID, Amount = amount };
             helper.Multiplayer.SendMessage(request, ContributeRequestType, modIDs: new[] { helper.ModRegistry.ModID });
             return false;
         }
 
-        private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount, out bool unlockedZone)
+        private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount, out bool unlockedZone, bool deferBroadcast = false)
         {
             actualAmount = 0;
             unlockedZone = false;
@@ -631,8 +638,15 @@ namespace ZoneLockChallenge
                 }
             }
 
-            SaveAndBroadcast();
-            OnStateChanged?.Invoke();
+            if (!deferBroadcast)
+            {
+                SaveAndBroadcast();
+                OnStateChanged?.Invoke();
+            }
+            else
+            {
+                SaveState();
+            }
             return true;
         }
 
@@ -648,7 +662,7 @@ namespace ZoneLockChallenge
             return false;
         }
 
-        private bool ExecutePurchase(string zoneId, Farmer buyer, out int scaledCost)
+        private bool ExecutePurchase(string zoneId, Farmer buyer, out int scaledCost, bool deferBroadcast = false)
         {
             scaledCost = 0;
             var zone = GetZoneById(zoneId);
@@ -694,8 +708,15 @@ namespace ZoneLockChallenge
                 monitor.Log($"Ticket for '{zoneId}' purchased by {buyer.Name} (ID {buyer.UniqueMultiplayerID}) for day {Game1.Date.TotalDays}.", LogLevel.Info);
             }
 
-            SaveAndBroadcast();
-            OnStateChanged?.Invoke();
+            if (!deferBroadcast)
+            {
+                SaveAndBroadcast();
+                OnStateChanged?.Invoke();
+            }
+            else
+            {
+                SaveState();
+            }
             return true;
         }
 
@@ -812,7 +833,7 @@ namespace ZoneLockChallenge
                 var buyer = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (buyer != null)
                 {
-                    bool success = ExecutePurchase(request.ZoneId, buyer, out int scaledCost);
+                    bool success = ExecutePurchase(request.ZoneId, buyer, out int scaledCost, deferBroadcast: true);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId,
@@ -822,6 +843,11 @@ namespace ZoneLockChallenge
                     };
                     helper.Multiplayer.SendMessage(response, PurchaseResponseType,
                         modIDs: new[] { helper.ModRegistry.ModID }, playerIDs: new[] { request.FarmerId });
+                    if (success)
+                    {
+                        BroadcastState();
+                        OnStateChanged?.Invoke();
+                    }
                 }
             }
 
@@ -870,7 +896,7 @@ namespace ZoneLockChallenge
                 var buyer = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (buyer != null)
                 {
-                    bool success = ExecuteBundlePurchase(request.ZoneId, buyer, out int cost);
+                    bool success = ExecuteBundlePurchase(request.ZoneId, buyer, out int cost, deferBroadcast: true);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId, Success = success, ScaledCost = success ? cost : 0,
@@ -878,6 +904,11 @@ namespace ZoneLockChallenge
                     };
                     helper.Multiplayer.SendMessage(response, BundlePurchaseResponseType,
                         modIDs: new[] { helper.ModRegistry.ModID }, playerIDs: new[] { request.FarmerId });
+                    if (success)
+                    {
+                        BroadcastState();
+                        OnStateChanged?.Invoke();
+                    }
                 }
             }
 
@@ -904,7 +935,7 @@ namespace ZoneLockChallenge
                 var contributor = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (contributor != null)
                 {
-                    bool success = ExecuteContribution(request.ZoneId, contributor, request.Amount, out int actualCost, out bool unlockedZone);
+                    bool success = ExecuteContribution(request.ZoneId, contributor, request.Amount, out int actualCost, out bool unlockedZone, deferBroadcast: true);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId, Success = success,
@@ -914,6 +945,11 @@ namespace ZoneLockChallenge
                     };
                     helper.Multiplayer.SendMessage(response, ContributeResponseType,
                         modIDs: new[] { helper.ModRegistry.ModID }, playerIDs: new[] { request.FarmerId });
+                    if (success)
+                    {
+                        BroadcastState();
+                        OnStateChanged?.Invoke();
+                    }
                 }
             }
 

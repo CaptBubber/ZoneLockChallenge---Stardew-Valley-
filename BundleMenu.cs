@@ -72,6 +72,7 @@ namespace ZoneLockChallenge
             this.onRequestBundleEdit = onRequestBundleEdit;
 
             stateManager.OnPurchaseResponse = OnPurchaseResponse;
+            stateManager.OnStateChanged = RefreshSidebar;
 
             RefreshSidebar();
             foreach (var zone in orderedZones)

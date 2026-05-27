@@ -131,6 +131,14 @@ namespace ZoneLockChallenge
                     spritesTexture = null;
             }
         }
+
+        public void InvalidateAllCaches()
+        {
+            spritesTexture = null;
+            helper.GameContent.InvalidateCache(ZoneDataAssetName);
+            helper.GameContent.InvalidateCache(RewardsAssetName);
+            helper.GameContent.InvalidateCache(MineGatesAssetName);
+        }
     }
 
     public class ZoneContentData

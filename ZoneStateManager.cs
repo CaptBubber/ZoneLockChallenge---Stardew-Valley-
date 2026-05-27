@@ -60,6 +60,7 @@ namespace ZoneLockChallenge
         public bool Success { get; set; }
         public string Message { get; set; }
         public int ScaledCost { get; set; }
+        public bool UnlockedZone { get; set; }
     }
 
     public class GlobalNotification
@@ -227,6 +228,8 @@ namespace ZoneLockChallenge
         {
             if (!Context.IsMainPlayer) return;
             State.UnlockedZones.Remove(zoneId);
+            State.ActiveTickets.Remove(zoneId);
+            State.ZoneContributions.Remove(zoneId);
             SaveAndBroadcast();
             OnStateChanged?.Invoke();
         }
@@ -278,7 +281,7 @@ namespace ZoneLockChallenge
                             : null
                     }).ToList();
                 }
-                catch { }
+                catch (Exception ex) { monitor.Log($"Failed to load zone data from content: {ex.Message}", LogLevel.Warn); }
             }
             return config.Zones;
         }
@@ -293,7 +296,7 @@ namespace ZoneLockChallenge
             if (string.IsNullOrEmpty(locationName)) return null;
             foreach (var zone in GetContentZones())
             {
-                if (zone.LocationNames.Contains(locationName))
+                if (zone.LocationNames.Any(n => string.Equals(n, locationName, StringComparison.OrdinalIgnoreCase)))
                     return zone;
                 if (zone.LocationPrefixes != null)
                     foreach (var prefix in zone.LocationPrefixes)
@@ -364,7 +367,7 @@ namespace ZoneLockChallenge
                     if (contentRewards.TryGetValue(zone.ZoneId, out var cr) && cr.Items.Count > 0)
                         return cr.Items;
                 }
-                catch { }
+                catch (Exception ex) { monitor.Log($"Failed to load rewards from content: {ex.Message}", LogLevel.Warn); }
             }
             return zone.Rewards;
         }
@@ -430,7 +433,7 @@ namespace ZoneLockChallenge
             if (contentProvider != null)
             {
                 try { return contentProvider.LoadMineGates(); }
-                catch { }
+                catch (Exception ex) { monitor.Log($"Failed to load mine gates from content: {ex.Message}", LogLevel.Warn); }
             }
             return config.MineLevelGates ?? new List<MineLevelGate>();
         }
@@ -570,9 +573,10 @@ namespace ZoneLockChallenge
             return false;
         }
 
-        private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount)
+        private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount, out bool unlockedZone)
         {
             actualAmount = 0;
+            unlockedZone = false;
             var zone = GetZoneById(zoneId);
             if (zone == null || zone.UnlockType != "permanent") return false;
             if (State.UnlockedZones.Contains(zoneId)) return false;
@@ -619,6 +623,11 @@ namespace ZoneLockChallenge
                     State.ZoneContributions.Remove(zoneId);
                     AddLogEntry("zone_unlock", contributor.Name, zone.DisplayName, 0);
                     BroadcastNotification($"{zone.DisplayName} has been unlocked!");
+                    unlockedZone = true;
+                }
+                else
+                {
+                    BroadcastNotification($"{zone.DisplayName} is funded! Bring the required items to unlock it.");
                 }
             }
 
@@ -665,8 +674,8 @@ namespace ZoneLockChallenge
                 foreach (var itemCost in effectiveItems)
                     RemoveItemsFromInventory(buyer, itemCost.ItemId, itemCost.Count);
 
-                // Give rewards to local buyer
-                GiveRewards(zone);
+                if (zone.UnlockType == "permanent")
+                    GiveRewards(zone);
             }
 
             if (zone.UnlockType == "permanent")
@@ -847,7 +856,8 @@ namespace ZoneLockChallenge
                         var effectiveItems = GetEffectiveItems(zone);
                         foreach (var itemCost in effectiveItems)
                             RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
-                        GiveRewards(zone);
+                        if (zone.UnlockType == "permanent")
+                            GiveRewards(zone);
                     }
                 }
 
@@ -894,11 +904,12 @@ namespace ZoneLockChallenge
                 var contributor = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (contributor != null)
                 {
-                    bool success = ExecuteContribution(request.ZoneId, contributor, request.Amount, out int actualCost);
+                    bool success = ExecuteContribution(request.ZoneId, contributor, request.Amount, out int actualCost, out bool unlockedZone);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId, Success = success,
                         ScaledCost = actualCost,
+                        UnlockedZone = unlockedZone,
                         Message = success ? "Contribution received!" : "Could not contribute."
                     };
                     helper.Multiplayer.SendMessage(response, ContributeResponseType,
@@ -910,7 +921,20 @@ namespace ZoneLockChallenge
             {
                 var response = e.ReadAs<ZonePurchaseResponse>();
                 if (response.Success)
+                {
                     Game1.player.Money -= response.ScaledCost;
+                    if (response.UnlockedZone)
+                    {
+                        var zone = GetZoneById(response.ZoneId);
+                        if (zone != null)
+                        {
+                            var effectiveItems = GetEffectiveItems(zone);
+                            foreach (var itemCost in effectiveItems)
+                                RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
+                            GiveRewards(zone);
+                        }
+                    }
+                }
                 OnPurchaseResponse?.Invoke(response);
             }
 

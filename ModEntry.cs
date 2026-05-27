@@ -135,11 +135,24 @@ namespace ZoneLockChallenge
         /// <summary>Fires BEFORE the game update — save position while player is still in their current location.</summary>
         private void OnUpdateTicking(object sender, UpdateTickingEventArgs e)
         {
-            if (Context.IsWorldReady && !isWarpingBack && Game1.player != null)
+            if (!Context.IsWorldReady || isWarpingBack || Game1.player == null) return;
+
+            string currentLoc = Game1.currentLocation?.Name ?? "Farm";
+            if (IsFarmLocation(currentLoc))
             {
-                lastSafeLocationName = Game1.currentLocation?.Name ?? "Farm";
+                lastSafeLocationName = currentLoc;
                 lastSafeX = (int)Game1.player.Tile.X;
                 lastSafeY = (int)Game1.player.Tile.Y;
+            }
+            else
+            {
+                var zone = stateManager.GetZoneForLocation(currentLoc);
+                if (zone == null || stateManager.IsZoneAccessible(zone.ZoneId, Game1.player.UniqueMultiplayerID))
+                {
+                    lastSafeLocationName = currentLoc;
+                    lastSafeX = (int)Game1.player.Tile.X;
+                    lastSafeY = (int)Game1.player.Tile.Y;
+                }
             }
         }
 
@@ -170,8 +183,7 @@ namespace ZoneLockChallenge
 
             if (IsFarmLocation(newLocationName)) return;
 
-            // On festival days, allow all warps so players can attend festivals
-            if (Utility.isFestivalDay())
+            if (Utility.isFestivalDay() && Game1.eventUp)
                 return;
 
             long farmerId = Game1.player.UniqueMultiplayerID;
@@ -291,13 +303,18 @@ namespace ZoneLockChallenge
                     return;
                 }
 
+                int standX = (int)Game1.player.Tile.X;
+                int standY = (int)Game1.player.Tile.Y;
+
                 // Check zone plates (use effective plate positions from save data or content)
                 foreach (var zone in stateManager.GetContentZones())
                 {
                     var plate = stateManager.GetEffectivePlate(zone);
                     if (plate == null) continue;
                     if (locName != plate.LocationName) continue;
-                    if (tileX != plate.X || tileY != plate.Y) continue;
+                    bool grabMatch = (tileX == plate.X && tileY == plate.Y);
+                    bool standMatch = (standX == plate.X && standY == plate.Y);
+                    if (!grabMatch && !standMatch) continue;
 
                     // Plate found!
                     if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))

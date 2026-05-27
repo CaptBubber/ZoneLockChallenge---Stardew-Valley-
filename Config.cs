@@ -235,22 +235,25 @@ namespace ZoneLockChallenge
 
         public PlayerRunStats Delta(PlayerRunStats baseline)
         {
-            if (baseline == null) return this;
+            if (baseline == null)
+                return new PlayerRunStats { PlayerName = PlayerName };
             return new PlayerRunStats
             {
                 PlayerName = PlayerName,
-                SeedsSown = SeedsSown - baseline.SeedsSown,
-                ItemsShipped = ItemsShipped - baseline.ItemsShipped,
-                FishCaught = FishCaught - baseline.FishCaught,
-                StonesSmashed = StonesSmashed - baseline.StonesSmashed,
-                StumpsChopped = StumpsChopped - baseline.StumpsChopped,
-                MonstersKilled = MonstersKilled - baseline.MonstersKilled,
-                GeodesCracked = GeodesCracked - baseline.GeodesCracked,
-                ItemsCooked = ItemsCooked - baseline.ItemsCooked,
-                ItemsCrafted = ItemsCrafted - baseline.ItemsCrafted,
-                StepsTaken = StepsTaken - baseline.StepsTaken
+                SeedsSown = SubSaturate(SeedsSown, baseline.SeedsSown),
+                ItemsShipped = SubSaturate(ItemsShipped, baseline.ItemsShipped),
+                FishCaught = SubSaturate(FishCaught, baseline.FishCaught),
+                StonesSmashed = SubSaturate(StonesSmashed, baseline.StonesSmashed),
+                StumpsChopped = SubSaturate(StumpsChopped, baseline.StumpsChopped),
+                MonstersKilled = SubSaturate(MonstersKilled, baseline.MonstersKilled),
+                GeodesCracked = SubSaturate(GeodesCracked, baseline.GeodesCracked),
+                ItemsCooked = SubSaturate(ItemsCooked, baseline.ItemsCooked),
+                ItemsCrafted = SubSaturate(ItemsCrafted, baseline.ItemsCrafted),
+                StepsTaken = SubSaturate(StepsTaken, baseline.StepsTaken)
             };
         }
+
+        private static uint SubSaturate(uint a, uint b) => a >= b ? a - b : 0;
     }
 
     public class MinecartConfig

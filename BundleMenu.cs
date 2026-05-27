@@ -36,6 +36,7 @@ namespace ZoneLockChallenge
 
         private bool showRunLog;
         private int logScrollOffset;
+        private int logMaxVisible = 1;
         private Rectangle runLogTabRect;
         private Rectangle zonesTabRect;
 
@@ -185,7 +186,7 @@ namespace ZoneLockChallenge
             if (zonesTabRect.Contains(x, y) && showRunLog)
             { showRunLog = false; Game1.playSound("smallSelect"); return; }
             if (runLogTabRect.Contains(x, y) && !showRunLog)
-            { showRunLog = true; logScrollOffset = 0; Game1.playSound("smallSelect"); return; }
+            { showRunLog = true; Game1.playSound("smallSelect"); return; }
 
             if (showRunLog) return;
 
@@ -300,9 +301,8 @@ namespace ZoneLockChallenge
             if (showRunLog)
             {
                 var log = stateManager.GetRunLog();
-                int maxLogVisible = (rightPanelRect.Height - 100) / 28;
                 if (direction > 0 && logScrollOffset > 0) logScrollOffset--;
-                else if (direction < 0 && logScrollOffset + maxLogVisible < log.Count) logScrollOffset++;
+                else if (direction < 0 && logScrollOffset + logMaxVisible < log.Count) logScrollOffset++;
                 return;
             }
             if (direction > 0 && scrollOffset > 0) scrollOffset--;
@@ -555,6 +555,9 @@ namespace ZoneLockChallenge
             int rowH = 26;
             int maxVisible = (rightPanelRect.Bottom - Padding - y) / rowH;
             if (maxVisible < 1) maxVisible = 1;
+            logMaxVisible = maxVisible;
+            if (logScrollOffset > Math.Max(0, log.Count - maxVisible))
+                logScrollOffset = Math.Max(0, log.Count - maxVisible);
 
             if (log.Count == 0)
             {

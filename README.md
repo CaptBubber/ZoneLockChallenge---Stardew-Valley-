@@ -11,7 +11,7 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 - **Ticket zones** (like Pelican Town) require buying a daily ticket each in-game day.
 - **Prerequisites**: some zones require others to be unlocked first, and some require a collective skill level across all players.
 - **Multiplayer**: zone unlocks are shared across all players. Any player can buy unlocks. The host's save stores all data and syncs to farmhands automatically.
-- **Festivals**: on festival days all zone locks are suspended so every player can attend.
+- **Festivals**: during active festival events, zone locks are suspended so every player can attend.
 
 ## Features
 
@@ -58,9 +58,17 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 - All changes are saved to the host's save data, override `config.json` defaults, and sync to all farmhands
 
 ### Item Rewards
-- Zones can grant item rewards upon purchase (e.g. a fishing rod when unlocking the Beach)
+- Zones can grant item rewards upon permanent unlock (e.g. a fishing rod when unlocking the Beach)
+- Daily ticket purchases do not grant rewards
 - Configurable via the in-game zone editor or `config.json` overrides
 - Items are added to inventory, or dropped as debris if inventory is full
+
+### Run Log
+- The Zone Board includes a **Run Log** tab that tracks all challenge events: zone unlocks, ticket purchases, contributions, and bundle completions
+- Each entry shows the day, season, player name, and gold amount
+- **Player activity stats** are tracked per player: seeds sown, items shipped, fish caught, stones smashed, stumps chopped, monsters killed, geodes cracked, items cooked/crafted, and steps taken
+- Stats show the delta since the challenge run began (cumulative across all sessions)
+- Scrollable log with full history preserved across save/load cycles
 
 ## Default Zone Setup
 
@@ -75,7 +83,7 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 | The Mines         | Permanent | 12,000g   | 5 Copper Bars            | —               | Mountain     | Mining 5 (coll.)  |
 | Railroad & Spa    | Permanent | 10,000g   | —                        | —               | Mountain     | —                 |
 | Calico Desert     | Permanent | 20,000g   | 5 Gold Bars              | —               | Bus Stop     | —                 |
-| Ginger Island     | Permanent | 40,000g   | 5 Iridium Bars, 3 Batteries | —            | Beach        | —                 |
+| Ginger Island     | Permanent | 40,000g   | 5 Iridium Bars, 3 Battery Packs | —            | Beach        | —                 |
 
 All of these are fully configurable in `config.json`. The host can also override costs, items, and rewards in-game via the zone editor.
 
@@ -142,6 +150,7 @@ Each zone in the `Zones` list has:
 - `UnlockType`: `"permanent"` or `"ticket"`.
 - `MoneyCost`: Gold required.
 - `Items`: List of `{ ItemId, DisplayName, Count }`. Uses [qualified item IDs](https://stardewvalleywiki.com/Modding:Common_data_field_types#Item_ID).
+- `Rewards`: List of `{ ItemId, DisplayName, Count }`. Items given on permanent unlock (not given for daily tickets).
 - `LocationNames`: Exact game location names in this zone.
 - `LocationPrefixes`: Prefix matches (e.g., `"UndergroundMine"` matches all mine floors).
 - `RequiresZone`: Another `ZoneId` that must be permanently unlocked first.
@@ -214,7 +223,7 @@ An optional `SecondaryBeachBypass` with the same structure (but `Enabled: false`
 
 ## Known Limitations
 
-- Festival warps bypass zone locks intentionally — players can attend all festivals even in locked zones.
+- During active festival events, zone locks are bypassed so players can attend. Zones remain locked at other times on festival days.
 - Warp totems and the return scepter are caught by the warp interceptor.
 - If you remove a zone from the config after unlocking it, locations in that zone become freely accessible (since they no longer match any zone definition).
 - In-game zone overrides (costs, items, rewards, plate positions, zone order, mine gates) are stored in the host's save data. Changing `config.json` only affects defaults — overrides take precedence.

@@ -186,7 +186,6 @@ namespace ZoneLockChallenge
         public int MoneyCost { get; set; }
         public List<ItemCost> Items { get; set; } = new();
         public List<ItemCost> Rewards { get; set; } = new();
-        public PlateTile Plate { get; set; }
         public bool IsCompleted { get; set; }
     }
 

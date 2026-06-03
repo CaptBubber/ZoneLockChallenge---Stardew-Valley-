@@ -37,7 +37,11 @@ namespace ZoneLockChallenge
             contentProvider = new ContentProvider(helper, config);
             stateManager = new ZoneStateManager(helper, Monitor, config, contentProvider);
 
-            stateManager.OnStateChanged = () => { };
+            stateManager.OnStateChanged = () =>
+            {
+                if (Game1.activeClickableMenu is BundleMenu menu)
+                    menu.RefreshSidebar();
+            };
 
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
             helper.Events.GameLoop.Saving += OnSaving;

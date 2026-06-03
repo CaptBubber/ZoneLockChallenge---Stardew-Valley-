@@ -72,7 +72,6 @@ namespace ZoneLockChallenge
             this.onRequestBundleEdit = onRequestBundleEdit;
 
             stateManager.OnPurchaseResponse = OnPurchaseResponse;
-            stateManager.OnStateChanged = RefreshSidebar;
 
             RefreshSidebar();
             foreach (var zone in orderedZones)
@@ -109,7 +108,7 @@ namespace ZoneLockChallenge
         private bool IsNewBundleIndex(int idx) => onRequestBundleEdit != null && idx == orderedZones.Count + customBundles.Count;
         private CustomBundle GetBundleAt(int idx) => customBundles[idx - orderedZones.Count];
 
-        private void RefreshSidebar()
+        internal void RefreshSidebar()
         {
             orderedZones = stateManager.GetOrderedZones();
             customBundles = stateManager.GetCustomBundles().ToList();

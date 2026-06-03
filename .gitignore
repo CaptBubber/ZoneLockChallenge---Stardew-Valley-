@@ -7,3 +7,6 @@ obj/
 *.suo
 packages/
 Directory.Build.targets
+
+# Local-only Claude Code memory (not for the remote repo)
+CLAUDE.md

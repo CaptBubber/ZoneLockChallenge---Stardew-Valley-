@@ -390,11 +390,11 @@ namespace ZoneLockChallenge
             SpriteText.drawStringWithScrollCenteredAt(b, title, xPositionOnScreen + width / 2, yPositionOnScreen + spaceToClearTopBorder - 4);
 
             // Name
-            b.DrawString(Game1.smallFont, "Name:", new Vector2(innerX, nameTextBox.Y + 8), Color.Black);
+            b.DrawString(Game1.smallFont, "Name:", new Vector2(innerX, nameTextBox.Y + 8), Game1.textColor);
             nameTextBox.Draw(b);
 
             // Description
-            b.DrawString(Game1.smallFont, "Desc:", new Vector2(innerX, descTextBox.Y + 8), Color.Black);
+            b.DrawString(Game1.smallFont, "Desc:", new Vector2(innerX, descTextBox.Y + 8), Game1.textColor);
             descTextBox.Draw(b);
 
             // Gold Cost
@@ -407,7 +407,7 @@ namespace ZoneLockChallenge
 
             // Item Requirements
             int itemListY = GetItemListY();
-            b.DrawString(Game1.smallFont, "Item Requirements:", new Vector2(innerX, itemListY), Color.Black);
+            b.DrawString(Game1.smallFont, "Item Requirements:", new Vector2(innerX, itemListY), Game1.textColor);
             if (editItems.Count > MaxVisibleItemRows)
                 b.DrawString(Game1.smallFont, $"({itemScrollOffset + 1}-{Math.Min(itemScrollOffset + MaxVisibleItemRows, editItems.Count)} of {editItems.Count})",
                     new Vector2(innerX + 200, itemListY), Color.Gray);
@@ -415,7 +415,7 @@ namespace ZoneLockChallenge
 
             // Rewards
             int rewardListY = GetRewardListY();
-            b.DrawString(Game1.smallFont, "Rewards:", new Vector2(innerX, rewardListY), Color.Black);
+            b.DrawString(Game1.smallFont, "Rewards:", new Vector2(innerX, rewardListY), Game1.textColor);
             if (editRewards.Count > MaxVisibleRewardRows)
                 b.DrawString(Game1.smallFont, $"({rewardScrollOffset + 1}-{Math.Min(rewardScrollOffset + MaxVisibleRewardRows, editRewards.Count)} of {editRewards.Count})",
                     new Vector2(innerX + 100, rewardListY), Color.Gray);
@@ -430,7 +430,7 @@ namespace ZoneLockChallenge
             DrawSmallButton(b, rewardModeBtn, "Rewards", addToRewards ? Color.White : Color.Gray * 0.6f);
             b.DrawString(Game1.smallFont, "Count:", new Vector2(addCountMinus.X - 60, addCountMinus.Y + 4), Color.DarkSlateGray);
             DrawSmallButton(b, addCountMinus, "-");
-            b.DrawString(Game1.smallFont, $"{addCount}", new Vector2(addCountMinus.Right + 6, addCountMinus.Y + 4), Color.Black);
+            b.DrawString(Game1.smallFont, $"{addCount}", new Vector2(addCountMinus.Right + 6, addCountMinus.Y + 4), Game1.textColor);
             DrawSmallButton(b, addCountPlus, "+");
 
             // Search box
@@ -450,14 +450,14 @@ namespace ZoneLockChallenge
                     // Hover highlight
                     Rectangle rowRect = new(innerX, rowY, innerWidth, SearchRowHeight);
                     if (rowRect.Contains(Game1.getMouseX(), Game1.getMouseY()))
-                        b.Draw(Game1.fadeToBlackRect, rowRect, Color.Wheat * 0.3f);
+                        b.Draw(Game1.staminaRect, rowRect, Color.Wheat * 0.4f);
 
                     if (itemCache.TryGetValue(result.QualifiedId, out var cached))
                     {
                         cached.drawInMenu(b, new Vector2(innerX - 16, rowY - 18), 0.45f, 1f, 0.9f, StackDrawType.Hide);
                         textX = innerX + 30;
                     }
-                    b.DrawString(Game1.smallFont, result.DisplayName, new Vector2(textX, rowY + 4), Color.Black);
+                    b.DrawString(Game1.smallFont, result.DisplayName, new Vector2(textX, rowY + 4), Game1.textColor);
 
                     // Small "click to add" hint on right
                     string hint = $"+ Add {addCount}";
@@ -475,7 +475,7 @@ namespace ZoneLockChallenge
             }
 
             // Buttons
-            DrawButton(b, saveBtnBounds, "Save", Color.LimeGreen);
+            DrawButton(b, saveBtnBounds, "Save", Color.Green);
             DrawButton(b, cancelBtnBounds, "Cancel", Color.IndianRed);
             if (!isNew)
                 DrawButton(b, deleteBtnBounds, "Delete", Color.OrangeRed);
@@ -500,7 +500,7 @@ namespace ZoneLockChallenge
                     cached.drawInMenu(b, new Vector2(innerX - 16, rowY - 20), 0.45f, 1f, 0.9f, StackDrawType.Hide);
                     textX = innerX + 28;
                 }
-                b.DrawString(Game1.smallFont, $"{item.DisplayName}: {item.Count}", new Vector2(textX, rowY), Color.Black);
+                b.DrawString(Game1.smallFont, $"{item.DisplayName}: {item.Count}", new Vector2(textX, rowY), Game1.textColor);
 
                 int btnBaseX = innerX + innerWidth - 220;
                 DrawSmallButton(b, new Rectangle(btnBaseX, rowY, 36, 28), "-10");

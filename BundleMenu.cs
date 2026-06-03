@@ -19,6 +19,14 @@ namespace ZoneLockChallenge
         private const int ZoneRowHeight = 56;
         private const int ButtonHeight = 64;
 
+        // Native Stardew UI sprites (Game1.mouseCursors)
+        private static readonly Rectangle CheckedBox = new(236, 425, 9, 9);
+        private static readonly Rectangle UncheckedBox = new(227, 425, 9, 9);
+        private static readonly Rectangle CoinIcon = new(193, 373, 9, 10);
+        private static readonly Rectangle UpArrowIcon = new(421, 459, 11, 12);
+        private static readonly Rectangle DownArrowIcon = new(421, 472, 11, 12);
+        private static readonly Color HighlightColor = Color.Wheat * 0.55f;
+
         private readonly ModConfig config;
         private readonly ZoneStateManager stateManager;
         private readonly bool purchaseEnabled;
@@ -37,6 +45,7 @@ namespace ZoneLockChallenge
         private bool showRunLog;
         private int logScrollOffset;
         private int logMaxVisible = 1;
+        private int hoverIndex = -1;
         private Rectangle runLogTabRect;
         private Rectangle zonesTabRect;
 
@@ -295,6 +304,22 @@ namespace ZoneLockChallenge
             }
         }
 
+        public override void performHoverAction(int x, int y)
+        {
+            base.performHoverAction(x, y);
+            hoverIndex = -1;
+            if (showRunLog) return;
+            for (int i = 0; i < zoneSlots.Count; i++)
+            {
+                if (zoneSlots[i].containsPoint(x, y))
+                {
+                    int dataIndex = scrollOffset + i;
+                    if (dataIndex < TotalEntries) hoverIndex = dataIndex;
+                    break;
+                }
+            }
+        }
+
         public override void receiveScrollWheelAction(int direction)
         {
             base.receiveScrollWheelAction(direction);
@@ -471,7 +496,7 @@ namespace ZoneLockChallenge
 
                 if (!string.IsNullOrEmpty(statusMessage))
                 {
-                    Color msgColor = statusIsError ? Color.Red : Color.LimeGreen;
+                    Color msgColor = statusIsError ? Color.DarkRed : Color.Green;
                     Vector2 msgSize = Game1.smallFont.MeasureString(statusMessage);
                     b.DrawString(Game1.smallFont, statusMessage,
                         new Vector2(rightPanelRect.X + (rightPanelRect.Width - (int)msgSize.X) / 2, purchaseButton.bounds.Y - (int)msgSize.Y - 8), msgColor);
@@ -551,6 +576,7 @@ namespace ZoneLockChallenge
 
             b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, contentWidth, 2), Color.SaddleBrown * 0.5f);
             y += 10;
+            int logListTop = y;
 
             int rowH = 26;
             int maxVisible = (rightPanelRect.Bottom - Padding - y) / rowH;
@@ -571,15 +597,14 @@ namespace ZoneLockChallenge
                 if (idx >= log.Count) break;
                 var entry = log[idx];
 
-                string icon;
-                Color iconColor;
+                Color markColor;
                 switch (entry.EventType)
                 {
-                    case "zone_unlock": icon = "+"; iconColor = Color.LimeGreen; break;
-                    case "ticket_purchase": icon = "T"; iconColor = Color.Gold; break;
-                    case "bundle_complete": icon = "*"; iconColor = Color.Orange; break;
-                    case "contribution": icon = "$"; iconColor = Color.CornflowerBlue; break;
-                    default: icon = "-"; iconColor = Color.Gray; break;
+                    case "zone_unlock": markColor = Color.ForestGreen; break;
+                    case "ticket_purchase": markColor = Color.Goldenrod; break;
+                    case "bundle_complete": markColor = Color.DarkOrange; break;
+                    case "contribution": markColor = Color.SteelBlue; break;
+                    default: markColor = Color.Gray; break;
                 }
 
                 string season = entry.Season != null
@@ -596,7 +621,7 @@ namespace ZoneLockChallenge
                     _ => $"{entry.PlayerName}: {entry.TargetName}"
                 };
 
-                b.DrawString(Game1.smallFont, icon, new Vector2(x, y), iconColor);
+                b.Draw(Game1.staminaRect, new Rectangle(x, y + 6, 10, 10), markColor);
                 b.DrawString(Game1.smallFont, dateStr, new Vector2(x + 20, y), Color.Gray);
                 float dateWidth = Game1.smallFont.MeasureString(dateStr).X;
                 float descMaxW = contentWidth - 20 - dateWidth - 20;
@@ -607,10 +632,10 @@ namespace ZoneLockChallenge
                 y += rowH;
             }
 
+            if (logScrollOffset > 0)
+                DrawCursorIcon(b, UpArrowIcon, rightPanelRect.Right - Padding - 28, logListTop, 2f, Color.White);
             if (logScrollOffset + maxVisible < log.Count)
-            {
-                b.DrawString(Game1.smallFont, "v scroll down v", new Vector2(x + contentWidth / 2 - 48, rightPanelRect.Bottom - Padding - 16), Color.Gray * 0.6f);
-            }
+                DrawCursorIcon(b, DownArrowIcon, x + contentWidth / 2 - 11, rightPanelRect.Bottom - Padding - 26, 2.5f, Color.White);
         }
 
         private void DrawZoneList(SpriteBatch b)
@@ -623,21 +648,24 @@ namespace ZoneLockChallenge
                 var slot = zoneSlots[i];
                 bool isSelected = dataIndex == selectedIndex;
 
+                if (!isSelected && dataIndex == hoverIndex)
+                    b.Draw(Game1.staminaRect, slot.bounds, Color.Wheat * 0.25f);
+
                 if (IsNewBundleIndex(dataIndex))
                 {
-                    if (isSelected) b.Draw(Game1.fadeToBlackRect, slot.bounds, Color.Wheat * 0.4f);
+                    if (isSelected) b.Draw(Game1.staminaRect, slot.bounds, HighlightColor);
                     b.DrawString(Game1.smallFont, "+ New Bundle", new Vector2(slot.bounds.X + 40, slot.bounds.Y + (ZoneRowHeight - 28) / 2), Color.SaddleBrown);
                     continue;
                 }
 
+                int iconY = slot.bounds.Y + (slot.bounds.Height - 27) / 2;
+
                 if (IsBundleIndex(dataIndex))
                 {
                     var bundle = GetBundleAt(dataIndex);
-                    if (isSelected) b.Draw(Game1.fadeToBlackRect, slot.bounds, Color.Wheat * 0.4f);
-                    string icon = bundle.IsCompleted ? "✓" : "○";
-                    Color icoColor = bundle.IsCompleted ? Color.LimeGreen : Color.Orange;
-                    b.DrawString(Game1.dialogueFont, icon, new Vector2(slot.bounds.X + 4, slot.bounds.Y + (ZoneRowHeight - 36) / 2), icoColor);
-                    Color nameCol = isSelected ? Color.Black : (bundle.IsCompleted ? Color.DarkGreen : Color.DarkGoldenrod);
+                    if (isSelected) b.Draw(Game1.staminaRect, slot.bounds, HighlightColor);
+                    DrawCursorIcon(b, bundle.IsCompleted ? CheckedBox : UncheckedBox, slot.bounds.X + 6, iconY, 3f, Color.White);
+                    Color nameCol = isSelected ? Game1.textColor : (bundle.IsCompleted ? Color.DarkGreen : Color.DarkGoldenrod);
                     b.DrawString(Game1.smallFont, bundle.DisplayName, new Vector2(slot.bounds.X + 40, slot.bounds.Y + (ZoneRowHeight - 28) / 2), nameCol);
                     continue;
                 }
@@ -649,16 +677,17 @@ namespace ZoneLockChallenge
                 bool isAccessible = isPermanent || hasTicket;
 
                 if (isSelected)
-                    b.Draw(Game1.fadeToBlackRect, slot.bounds, Color.Wheat * 0.4f);
+                    b.Draw(Game1.staminaRect, slot.bounds, HighlightColor);
 
-                string statusIcon; Color iconColor;
-                if (isPermanent) { statusIcon = "+"; iconColor = Color.LimeGreen; }
-                else if (hasTicket) { statusIcon = "T"; iconColor = Color.LimeGreen; }
-                else { statusIcon = "X"; iconColor = Color.Red; }
+                // Status icon: checked box = owned, coin = ticket today, empty box = locked
+                if (isPermanent)
+                    DrawCursorIcon(b, CheckedBox, slot.bounds.X + 6, iconY, 3f, Color.White);
+                else if (hasTicket)
+                    DrawCursorIcon(b, CoinIcon, slot.bounds.X + 8, iconY, 2.5f, Color.White);
+                else
+                    DrawCursorIcon(b, UncheckedBox, slot.bounds.X + 6, iconY, 3f, Color.White);
 
-                b.DrawString(Game1.dialogueFont, statusIcon, new Vector2(slot.bounds.X + 4, slot.bounds.Y + (ZoneRowHeight - 36) / 2), iconColor);
-
-                Color nameColor = isSelected ? Color.Black : (isAccessible ? Color.DarkGreen : Color.DarkRed);
+                Color nameColor = isSelected ? Game1.textColor : (isAccessible ? Color.DarkGreen : Color.DarkRed);
                 b.DrawString(Game1.smallFont, zone.DisplayName, new Vector2(slot.bounds.X + 40, slot.bounds.Y + (ZoneRowHeight - 28) / 2), nameColor);
 
                 if (i < reorderUpButtons.Count && IsZoneIndex(dataIndex))
@@ -697,7 +726,7 @@ namespace ZoneLockChallenge
 
             // Type
             string typeLabel = zone.UnlockType == "permanent" ? "Permanent Unlock" : "Daily Ticket";
-            b.DrawString(Game1.smallFont, $"Type: {typeLabel}", new Vector2(x, y), Color.Black);
+            b.DrawString(Game1.smallFont, $"Type: {typeLabel}", new Vector2(x, y), Game1.textColor);
             y += 32;
 
             // Gold cost with coin icon (scaled by number of unlocked zones)
@@ -721,8 +750,8 @@ namespace ZoneLockChallenge
                     y += 26;
                     int barWidth = Math.Min(contentWidth, 280);
                     int barHeight = 16;
-                    b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, barWidth, barHeight), Color.Gray * 0.4f);
-                    b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, (int)(barWidth * progress), barHeight), Color.Gold);
+                    b.Draw(Game1.staminaRect, new Rectangle(x, y, barWidth, barHeight), Color.Black * 0.25f);
+                    b.Draw(Game1.staminaRect, new Rectangle(x, y, (int)(barWidth * progress), barHeight), Color.Goldenrod);
                     b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, barWidth, 2), Color.SaddleBrown * 0.6f);
                     b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y + barHeight - 2, barWidth, 2), Color.SaddleBrown * 0.6f);
                     b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, 2, barHeight), Color.SaddleBrown * 0.6f);
@@ -735,7 +764,7 @@ namespace ZoneLockChallenge
             var effectiveItems = stateManager.GetEffectiveItems(zone);
             if (effectiveItems.Count > 0)
             {
-                b.DrawString(Game1.smallFont, "Items required:", new Vector2(x, y), Color.Black);
+                b.DrawString(Game1.smallFont, "Items required:", new Vector2(x, y), Game1.textColor);
                 y += 28;
 
                 foreach (var item in effectiveItems)
@@ -755,8 +784,9 @@ namespace ZoneLockChallenge
                         textX = x + 24;
                     }
 
-                    string check = hasEnough ? "\u2713 " : "";
-                    b.DrawString(Game1.smallFont, $"{check}{item.DisplayName}: {have}/{item.Count}", new Vector2(textX, y), itemColor);
+                    string line = $"{item.DisplayName}: {have}/{item.Count}";
+                    b.DrawString(Game1.smallFont, line, new Vector2(textX, y), itemColor);
+                    if (hasEnough) DrawTrailingCheck(b, line, textX, y);
                     y += 36;
                 }
             }
@@ -770,7 +800,7 @@ namespace ZoneLockChallenge
             var rewards = stateManager.GetRewards(zone);
             if (rewards.Count > 0)
             {
-                b.DrawString(Game1.smallFont, "Rewards:", new Vector2(x, y), Color.Black);
+                b.DrawString(Game1.smallFont, "Rewards:", new Vector2(x, y), Game1.textColor);
                 y += 28;
 
                 foreach (var reward in rewards)
@@ -812,14 +842,14 @@ namespace ZoneLockChallenge
                 if (gates.Count > 0)
                 {
                     int collectiveMining = stateManager.GetCollectiveSkillLevel("Mining");
-                    b.DrawString(Game1.smallFont, "Mine Floor Gates:", new Vector2(x, y), Color.Black);
+                    b.DrawString(Game1.smallFont, "Mine Floor Gates:", new Vector2(x, y), Game1.textColor);
                     y += 26;
                     foreach (var gate in gates.OrderBy(g => g.FloorNumber))
                     {
                         bool met = collectiveMining >= gate.RequiredMiningLevel;
-                        string check = met ? "\u2713 " : "";
-                        b.DrawString(Game1.smallFont, $"{check}Floor {gate.FloorNumber}: Mining Lv {gate.RequiredMiningLevel}",
-                            new Vector2(x + 8, y), met ? Color.DarkGreen : Color.DarkRed);
+                        string line = $"Floor {gate.FloorNumber}: Mining Lv {gate.RequiredMiningLevel}";
+                        b.DrawString(Game1.smallFont, line, new Vector2(x + 8, y), met ? Color.DarkGreen : Color.DarkRed);
+                        if (met) DrawTrailingCheck(b, line, x + 8, y);
                         y += 24;
                     }
                     y += 4;
@@ -830,11 +860,11 @@ namespace ZoneLockChallenge
             y += 8;
             string status; Color statusColor;
             if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
-            { status = "UNLOCKED"; statusColor = Color.LimeGreen; }
+            { status = "UNLOCKED"; statusColor = Color.Green; }
             else if (stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID))
-            { status = "TICKET ACTIVE TODAY"; statusColor = Color.LimeGreen; }
+            { status = "TICKET ACTIVE TODAY"; statusColor = Color.Green; }
             else
-            { status = "LOCKED"; statusColor = Color.Red; }
+            { status = "LOCKED"; statusColor = Color.DarkRed; }
             b.DrawString(Game1.dialogueFont, status, new Vector2(x, y), statusColor);
 
             // Purchase button (or read-only notice)
@@ -938,7 +968,7 @@ namespace ZoneLockChallenge
             b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, contentWidth, 2), Color.SaddleBrown * 0.5f);
             y += 12;
 
-            b.DrawString(Game1.smallFont, "Type: Custom Bundle", new Vector2(x, y), Color.Black);
+            b.DrawString(Game1.smallFont, "Type: Custom Bundle", new Vector2(x, y), Game1.textColor);
             y += 32;
 
             if (bundle.MoneyCost > 0)
@@ -951,7 +981,7 @@ namespace ZoneLockChallenge
 
             if (bundle.Items.Count > 0)
             {
-                b.DrawString(Game1.smallFont, "Items required:", new Vector2(x, y), Color.Black);
+                b.DrawString(Game1.smallFont, "Items required:", new Vector2(x, y), Game1.textColor);
                 y += 28;
                 foreach (var item in bundle.Items)
                 {
@@ -965,15 +995,16 @@ namespace ZoneLockChallenge
                         cached.drawInMenu(b, new Vector2(x - 20, y - 24), 0.5f, 1f, 0.9f, StackDrawType.Hide);
                         textX = x + 24;
                     }
-                    string check = hasEnough ? "✓ " : "";
-                    b.DrawString(Game1.smallFont, $"{check}{item.DisplayName}: {have}/{item.Count}", new Vector2(textX, y), hasEnough ? Color.DarkGreen : Color.DarkRed);
+                    string line = $"{item.DisplayName}: {have}/{item.Count}";
+                    b.DrawString(Game1.smallFont, line, new Vector2(textX, y), hasEnough ? Color.DarkGreen : Color.DarkRed);
+                    if (hasEnough) DrawTrailingCheck(b, line, textX, y);
                     y += 36;
                 }
             }
 
             if (bundle.Rewards.Count > 0)
             {
-                b.DrawString(Game1.smallFont, "Rewards:", new Vector2(x, y), Color.Black);
+                b.DrawString(Game1.smallFont, "Rewards:", new Vector2(x, y), Game1.textColor);
                 y += 28;
                 foreach (var reward in bundle.Rewards)
                 {
@@ -990,7 +1021,7 @@ namespace ZoneLockChallenge
 
             y += 8;
             string status = bundle.IsCompleted ? "COMPLETED" : "INCOMPLETE";
-            Color statusColor = bundle.IsCompleted ? Color.LimeGreen : Color.Orange;
+            Color statusColor = bundle.IsCompleted ? Color.Green : Color.DarkOrange;
             b.DrawString(Game1.dialogueFont, status, new Vector2(x, y), statusColor);
 
             // Purchase button
@@ -1033,5 +1064,13 @@ namespace ZoneLockChallenge
             if (string.IsNullOrEmpty(itemId) || itemCache.ContainsKey(itemId)) return;
             try { var item = ItemRegistry.Create(itemId); if (item != null) itemCache[itemId] = item; } catch { }
         }
+
+        /// <summary>Draw a sprite from Game1.mouseCursors at the given top-left position.</summary>
+        private static void DrawCursorIcon(SpriteBatch b, Rectangle src, float ix, float iy, float scale, Color color)
+            => b.Draw(Game1.mouseCursors, new Vector2(ix, iy), src, color, 0f, Vector2.Zero, scale, SpriteEffects.None, 0.9f);
+
+        /// <summary>Draw a small green check sprite immediately after a satisfied requirement line.</summary>
+        private static void DrawTrailingCheck(SpriteBatch b, string line, float lineX, float lineY)
+            => DrawCursorIcon(b, CheckedBox, lineX + Game1.smallFont.MeasureString(line).X + 8, lineY + 2, 2f, Color.White);
     }
 }

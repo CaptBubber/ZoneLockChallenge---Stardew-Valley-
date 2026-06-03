@@ -539,7 +539,7 @@ namespace ZoneLockChallenge
             // ── Item Requirements ──
             y += 12;
             int itemListY = GetItemListY();
-            b.DrawString(Game1.smallFont, "Item Requirements:", new Vector2(innerX, itemListY), Color.Black);
+            b.DrawString(Game1.smallFont, "Item Requirements:", new Vector2(innerX, itemListY), Game1.textColor);
             DrawItemList(b, editItems, itemListY + 28, itemScrollOffset, MaxVisibleItemRows);
 
             if (editItems.Count > MaxVisibleItemRows)
@@ -550,7 +550,7 @@ namespace ZoneLockChallenge
 
             // ── Rewards ──
             int rewardListY = GetRewardListY();
-            b.DrawString(Game1.smallFont, "Rewards:", new Vector2(innerX, rewardListY), Color.Black);
+            b.DrawString(Game1.smallFont, "Rewards:", new Vector2(innerX, rewardListY), Game1.textColor);
             DrawItemList(b, editRewards, rewardListY + 28, rewardScrollOffset, MaxVisibleRewardRows);
 
             if (editRewards.Count > MaxVisibleRewardRows)
@@ -591,7 +591,7 @@ namespace ZoneLockChallenge
 
             // Add count display and buttons
             string countText = $"{addCount}";
-            b.DrawString(Game1.smallFont, countText, new Vector2(addCountMinus.Right + 4, addCountMinus.Y + 2), Color.Black);
+            b.DrawString(Game1.smallFont, countText, new Vector2(addCountMinus.Right + 4, addCountMinus.Y + 2), Game1.textColor);
             DrawSmallButton(b, addCountMinus, "-");
             DrawSmallButton(b, addCountPlus, "+");
             DrawSmallButton(b, addItemBtn, "Add");
@@ -602,7 +602,7 @@ namespace ZoneLockChallenge
             DrawInventoryGrid(b);
 
             // ── Save / Cancel buttons ──
-            DrawButton(b, saveBtnBounds, "Save", Color.LimeGreen);
+            DrawButton(b, saveBtnBounds, "Save", Color.Green);
             DrawButton(b, cancelBtnBounds, "Cancel", Color.IndianRed);
 
             drawMouse(b);
@@ -630,7 +630,7 @@ namespace ZoneLockChallenge
                 }
 
                 // Item name and count
-                b.DrawString(Game1.smallFont, $"{item.DisplayName}: {item.Count}", new Vector2(textX, rowY), Color.Black);
+                b.DrawString(Game1.smallFont, $"{item.DisplayName}: {item.Count}", new Vector2(textX, rowY), Game1.textColor);
 
                 // Row buttons
                 int btnBaseX = innerX + innerWidth - 220;
@@ -657,10 +657,12 @@ namespace ZoneLockChallenge
                 int rowY = startY + i * RowHeight;
 
                 bool met = collectiveMining >= gate.RequiredMiningLevel;
-                Color textColor = met ? Color.DarkGreen : Color.DarkRed;
-                string check = met ? "\u2713 " : "";
-                b.DrawString(Game1.smallFont, $"{check}Floor {gate.FloorNumber}: Mining Lv {gate.RequiredMiningLevel}",
-                    new Vector2(innerX + 8, rowY), textColor);
+                Color rowColor = met ? Color.DarkGreen : Color.DarkRed;
+                string line = $"Floor {gate.FloorNumber}: Mining Lv {gate.RequiredMiningLevel}";
+                b.DrawString(Game1.smallFont, line, new Vector2(innerX + 8, rowY), rowColor);
+                if (met)
+                    b.Draw(Game1.mouseCursors, new Vector2(innerX + 8 + Game1.smallFont.MeasureString(line).X + 8, rowY + 2),
+                        new Rectangle(236, 425, 9, 9), Color.White, 0f, Vector2.Zero, 2f, SpriteEffects.None, 0.9f);
 
                 int btnBaseX = innerX + innerWidth - 220;
                 DrawSmallButton(b, new Rectangle(btnBaseX, rowY, 36, 28), "-5");
@@ -702,7 +704,7 @@ namespace ZoneLockChallenge
                 int hRow = (mouseY - inventoryBounds.Y) / InvSlotSize;
                 int hx = inventoryBounds.X + hCol * InvSlotSize;
                 int hy = inventoryBounds.Y + hRow * InvSlotSize;
-                b.Draw(Game1.fadeToBlackRect, new Rectangle(hx, hy, InvSlotSize, InvSlotSize), Color.White * 0.3f);
+                b.Draw(Game1.staminaRect, new Rectangle(hx, hy, InvSlotSize, InvSlotSize), Color.White * 0.35f);
             }
         }
 

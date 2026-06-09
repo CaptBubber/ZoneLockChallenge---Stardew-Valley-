@@ -73,6 +73,10 @@ namespace ZoneLockChallenge
         public string ZoneId { get; set; }
         public long FarmerId { get; set; }
         public int Amount { get; set; }
+        /// <summary>Whether the sender held all required unlock items when the request was sent.
+        /// The host's mirror of a farmhand inventory can lag behind, so the farmhand's own
+        /// count at send time is the authoritative check for its inventory.</summary>
+        public bool HasRequiredItems { get; set; }
     }
 
     public class ZoneStateManager
@@ -97,7 +101,13 @@ namespace ZoneLockChallenge
 
         /// <summary>Callback invoked after any purchase completes (host or farmhand). Used to refresh plates.</summary>
         public Action OnStateChanged;
-        public Action<ZonePurchaseResponse> OnPurchaseResponse;
+        /// <summary>Raised on a farmhand when the host answers a purchase/contribute/bundle request.
+        /// Event (not a settable delegate) so a newly opened menu can't clobber an older menu's
+        /// subscription while its request is still in flight.</summary>
+        public event Action<ZonePurchaseResponse> OnPurchaseResponse;
+
+        public void SubscribePurchaseResponse(Action<ZonePurchaseResponse> handler) => OnPurchaseResponse += handler;
+        public void UnsubscribePurchaseResponse(Action<ZonePurchaseResponse> handler) => OnPurchaseResponse -= handler;
 
         public ZoneStateManager(IModHelper helper, IMonitor monitor, ModConfig config, ContentProvider contentProvider = null)
         {
@@ -496,23 +506,26 @@ namespace ZoneLockChallenge
         public bool TryPurchaseBundle(string bundleId, Farmer buyer)
         {
             if (Context.IsMainPlayer)
-                return ExecuteBundlePurchase(bundleId, buyer, out _);
+                return ExecuteBundlePurchase(bundleId, buyer, out _, out _);
 
             var request = new ZonePurchaseRequest { ZoneId = bundleId, FarmerId = buyer.UniqueMultiplayerID };
             helper.Multiplayer.SendMessage(request, BundlePurchaseRequestType, modIDs: new[] { helper.ModRegistry.ModID });
             return false;
         }
 
-        private bool ExecuteBundlePurchase(string bundleId, Farmer buyer, out int cost, bool deferBroadcast = false)
+        private bool ExecuteBundlePurchase(string bundleId, Farmer buyer, out int cost, out string failReason, bool deferBroadcast = false)
         {
             cost = 0;
+            failReason = "Cannot complete bundle.";
             var bundle = State.CustomBundles.FirstOrDefault(b => b.BundleId == bundleId);
-            if (bundle == null || bundle.IsCompleted) return false;
+            if (bundle == null) { failReason = "Unknown bundle."; return false; }
+            if (bundle.IsCompleted) { failReason = "Bundle is already completed."; return false; }
 
             cost = bundle.MoneyCost;
-            if (buyer.Money < cost) return false;
+            if (buyer.Money < cost) { failReason = $"Not enough gold (cost is {cost:N0}g)."; return false; }
             foreach (var item in bundle.Items)
-                if (CountItemInInventory(buyer, item.ItemId) < item.Count) return false;
+                if (CountItemInInventory(buyer, item.ItemId) < item.Count)
+                { failReason = $"Missing required items ({item.DisplayName})."; return false; }
 
             bool isLocalBuyer = (buyer.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID);
             if (isLocalBuyer)
@@ -573,56 +586,83 @@ namespace ZoneLockChallenge
         public bool TryContribute(string zoneId, Farmer contributor, int amount)
         {
             if (Context.IsMainPlayer)
-                return ExecuteContribution(zoneId, contributor, amount, out _, out _);
+                return ExecuteContribution(zoneId, contributor, amount, out _, out _, out _);
 
-            var request = new ContributeRequest { ZoneId = zoneId, FarmerId = contributor.UniqueMultiplayerID, Amount = amount };
+            // Validate items on this side: the host's mirror of our inventory may be stale.
+            bool hasItems = true;
+            var zone = GetZoneById(zoneId);
+            if (zone != null)
+                foreach (var itemCost in GetEffectiveItems(zone))
+                    if (CountItemInInventory(contributor, itemCost.ItemId) < itemCost.Count)
+                    { hasItems = false; break; }
+
+            var request = new ContributeRequest { ZoneId = zoneId, FarmerId = contributor.UniqueMultiplayerID, Amount = amount, HasRequiredItems = hasItems };
             helper.Multiplayer.SendMessage(request, ContributeRequestType, modIDs: new[] { helper.ModRegistry.ModID });
             return false;
         }
 
-        private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount, out bool unlockedZone, bool deferBroadcast = false)
+        /// <param name="amount">Gold to contribute. 0 is allowed when the zone is already fully
+        /// funded — that retries the item-delivery unlock (prevents a funded zone with missing
+        /// items from being stuck forever).</param>
+        /// <param name="remoteHasItems">For remote contributors: whether they held the required
+        /// items at request time. Null = contributor is local, count their inventory directly.</param>
+        private bool ExecuteContribution(string zoneId, Farmer contributor, int amount, out int actualAmount, out bool unlockedZone, out string failReason, bool deferBroadcast = false, bool? remoteHasItems = null)
         {
             actualAmount = 0;
             unlockedZone = false;
+            failReason = "Could not contribute.";
             var zone = GetZoneById(zoneId);
             if (zone == null || zone.UnlockType != "permanent") return false;
-            if (State.UnlockedZones.Contains(zoneId)) return false;
-            if (!ArePrerequisitesMet(zone)) return false;
-            if (amount <= 0 || contributor.Money < amount) return false;
+            if (State.UnlockedZones.Contains(zoneId)) { failReason = "Zone is already unlocked."; return false; }
+            if (!ArePrerequisitesMet(zone)) { failReason = "Prerequisites not met."; return false; }
+            if (amount < 0) return false;
 
             int scaledCost = GetScaledMoneyCost(zone);
             int totalSoFar = GetTotalContributions(zoneId);
-            int remaining = scaledCost - totalSoFar;
-            if (remaining <= 0) return false;
-
+            int remaining = Math.Max(0, scaledCost - totalSoFar);
             int actual = Math.Min(amount, remaining);
-            actualAmount = actual;
             bool isLocal = (contributor.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID);
+
+            if (remaining > 0 && actual <= 0) { failReason = "Nothing to contribute."; return false; }
+            if (actual > 0 && contributor.Money < actual) { failReason = "Not enough gold."; return false; }
+
+            // Check items BEFORE recording gold, so a failed item-only retry changes no state.
+            bool itemsMet;
             if (isLocal)
-                contributor.Money -= actual;
-
-            if (!State.ZoneContributions.ContainsKey(zoneId))
-                State.ZoneContributions[zoneId] = new Dictionary<long, int>();
-            State.ZoneContributions.TryGetValue(zoneId, out var contribs);
-            contribs[contributor.UniqueMultiplayerID] = GetPlayerContribution(zoneId, contributor.UniqueMultiplayerID) + actual;
-
-            int newTotal = GetTotalContributions(zoneId);
-            AddLogEntry("contribution", contributor.Name, zone.DisplayName, actual);
-            BroadcastNotification($"{contributor.Name} contributed {actual}g toward {zone.DisplayName} ({newTotal}/{scaledCost})");
-
-            if (newTotal >= scaledCost)
             {
-                var effectiveItems = GetEffectiveItems(zone);
-                bool itemsMet = true;
-                foreach (var itemCost in effectiveItems)
+                itemsMet = true;
+                foreach (var itemCost in GetEffectiveItems(zone))
                     if (CountItemInInventory(contributor, itemCost.ItemId) < itemCost.Count)
                     { itemsMet = false; break; }
+            }
+            else
+                itemsMet = remoteHasItems ?? false;
 
+            if (actual <= 0 && !itemsMet)
+            { failReason = "You don't have the required items."; return false; }
+
+            actualAmount = actual;
+            if (actual > 0)
+            {
+                if (isLocal)
+                    contributor.Money -= actual;
+
+                if (!State.ZoneContributions.ContainsKey(zoneId))
+                    State.ZoneContributions[zoneId] = new Dictionary<long, int>();
+                var contribs = State.ZoneContributions[zoneId];
+                contribs[contributor.UniqueMultiplayerID] = GetPlayerContribution(zoneId, contributor.UniqueMultiplayerID) + actual;
+
+                AddLogEntry("contribution", contributor.Name, zone.DisplayName, actual);
+                BroadcastNotification($"{contributor.Name} contributed {actual}g toward {zone.DisplayName} ({GetTotalContributions(zoneId)}/{scaledCost})");
+            }
+
+            if (GetTotalContributions(zoneId) >= scaledCost)
+            {
                 if (itemsMet)
                 {
                     if (isLocal)
                     {
-                        foreach (var itemCost in effectiveItems)
+                        foreach (var itemCost in GetEffectiveItems(zone))
                             RemoveItemsFromInventory(contributor, itemCost.ItemId, itemCost.Count);
                         GiveRewards(zone);
                     }
@@ -634,7 +674,7 @@ namespace ZoneLockChallenge
                 }
                 else
                 {
-                    BroadcastNotification($"{zone.DisplayName} is funded! Bring the required items to unlock it.");
+                    BroadcastNotification($"{zone.DisplayName} is funded! Bring the required items and press Deliver Items at the plate.");
                 }
             }
 
@@ -655,28 +695,34 @@ namespace ZoneLockChallenge
         public bool TryPurchase(string zoneId, Farmer buyer)
         {
             if (Context.IsMainPlayer)
-                return ExecutePurchase(zoneId, buyer, out _);
+                return ExecutePurchase(zoneId, buyer, out _, out _);
 
             var request = new ZonePurchaseRequest { ZoneId = zoneId, FarmerId = buyer.UniqueMultiplayerID };
             helper.Multiplayer.SendMessage(request, PurchaseRequestType, modIDs: new[] { helper.ModRegistry.ModID });
             return false;
         }
 
-        private bool ExecutePurchase(string zoneId, Farmer buyer, out int scaledCost, bool deferBroadcast = false)
+        private bool ExecutePurchase(string zoneId, Farmer buyer, out int scaledCost, out string failReason, bool deferBroadcast = false)
         {
             scaledCost = 0;
+            failReason = "Purchase failed.";
             var zone = GetZoneById(zoneId);
-            if (zone == null) return false;
-            if (!ArePrerequisitesMet(zone)) return false;
-            if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId)) return false;
+            if (zone == null) { failReason = "Unknown zone."; return false; }
+            if (!ArePrerequisitesMet(zone)) { failReason = "Prerequisites not met."; return false; }
+            if (zone.UnlockType == "permanent" && State.UnlockedZones.Contains(zoneId))
+            { failReason = "Zone is already unlocked."; return false; }
+            // Idempotency: a re-sent or replayed ticket request must not charge twice.
+            if (zone.UnlockType == "ticket" && HasActiveTicket(zoneId, buyer.UniqueMultiplayerID))
+            { failReason = "You already have a ticket for today."; return false; }
 
             var effectiveItems = GetEffectiveItems(zone);
             scaledCost = GetScaledMoneyCost(zone);
-            if (buyer.Money < scaledCost) return false;
+            if (buyer.Money < scaledCost)
+            { failReason = $"Not enough gold (cost is {scaledCost:N0}g)."; return false; }
 
             foreach (var itemCost in effectiveItems)
                 if (CountItemInInventory(buyer, itemCost.ItemId) < itemCost.Count)
-                    return false;
+                { failReason = $"Missing required items ({itemCost.DisplayName})."; return false; }
 
             // Only deduct money/items if buyer is the local player.
             // For remote farmhands, the host cannot modify their Money directly;
@@ -832,13 +878,13 @@ namespace ZoneLockChallenge
                 var buyer = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (buyer != null)
                 {
-                    bool success = ExecutePurchase(request.ZoneId, buyer, out int scaledCost, deferBroadcast: true);
+                    bool success = ExecutePurchase(request.ZoneId, buyer, out int scaledCost, out string failReason, deferBroadcast: true);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId,
                         Success = success,
                         ScaledCost = success ? scaledCost : 0,
-                        Message = success ? "Purchase successful!" : "Purchase failed. Check your funds and inventory."
+                        Message = success ? "Purchase successful!" : failReason
                     };
                     helper.Multiplayer.SendMessage(response, PurchaseResponseType,
                         modIDs: new[] { helper.ModRegistry.ModID }, playerIDs: new[] { request.FarmerId });
@@ -877,7 +923,7 @@ namespace ZoneLockChallenge
                     var zone = GetZoneById(response.ZoneId);
                     if (zone != null)
                     {
-                        Game1.player.Money -= response.ScaledCost;
+                        Game1.player.Money = Math.Max(0, Game1.player.Money - response.ScaledCost);
                         var effectiveItems = GetEffectiveItems(zone);
                         foreach (var itemCost in effectiveItems)
                             RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
@@ -895,11 +941,11 @@ namespace ZoneLockChallenge
                 var buyer = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (buyer != null)
                 {
-                    bool success = ExecuteBundlePurchase(request.ZoneId, buyer, out int cost, deferBroadcast: true);
+                    bool success = ExecuteBundlePurchase(request.ZoneId, buyer, out int cost, out string failReason, deferBroadcast: true);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId, Success = success, ScaledCost = success ? cost : 0,
-                        Message = success ? "Bundle completed!" : "Cannot complete bundle. Check your funds and inventory."
+                        Message = success ? "Bundle completed!" : failReason
                     };
                     helper.Multiplayer.SendMessage(response, BundlePurchaseResponseType,
                         modIDs: new[] { helper.ModRegistry.ModID }, playerIDs: new[] { request.FarmerId });
@@ -919,7 +965,7 @@ namespace ZoneLockChallenge
                     var bundle = State.CustomBundles.FirstOrDefault(b => b.BundleId == response.ZoneId);
                     if (bundle != null)
                     {
-                        Game1.player.Money -= response.ScaledCost;
+                        Game1.player.Money = Math.Max(0, Game1.player.Money - response.ScaledCost);
                         foreach (var itemCost in bundle.Items)
                             RemoveItemsFromInventory(Game1.player, itemCost.ItemId, itemCost.Count);
                         GiveBundleRewards(bundle);
@@ -934,13 +980,14 @@ namespace ZoneLockChallenge
                 var contributor = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == request.FarmerId);
                 if (contributor != null)
                 {
-                    bool success = ExecuteContribution(request.ZoneId, contributor, request.Amount, out int actualCost, out bool unlockedZone, deferBroadcast: true);
+                    bool success = ExecuteContribution(request.ZoneId, contributor, request.Amount, out int actualCost, out bool unlockedZone, out string failReason,
+                        deferBroadcast: true, remoteHasItems: request.HasRequiredItems);
                     var response = new ZonePurchaseResponse
                     {
                         ZoneId = request.ZoneId, Success = success,
                         ScaledCost = actualCost,
                         UnlockedZone = unlockedZone,
-                        Message = success ? "Contribution received!" : "Could not contribute."
+                        Message = success ? (unlockedZone ? "Zone unlocked!" : "Contribution received!") : failReason
                     };
                     helper.Multiplayer.SendMessage(response, ContributeResponseType,
                         modIDs: new[] { helper.ModRegistry.ModID }, playerIDs: new[] { request.FarmerId });
@@ -957,7 +1004,7 @@ namespace ZoneLockChallenge
                 var response = e.ReadAs<ZonePurchaseResponse>();
                 if (response.Success)
                 {
-                    Game1.player.Money -= response.ScaledCost;
+                    Game1.player.Money = Math.Max(0, Game1.player.Money - response.ScaledCost);
                     if (response.UnlockedZone)
                     {
                         var zone = GetZoneById(response.ZoneId);

@@ -41,6 +41,8 @@ namespace ZoneLockChallenge
         private int statusMessageTimer;
         private bool statusIsError;
         private bool waitingForResponse;
+        private int responseTimeoutMs;
+        private const int ResponseTimeoutTotalMs = 10000;
 
         private bool showRunLog;
         private int logScrollOffset;
@@ -80,7 +82,8 @@ namespace ZoneLockChallenge
             this.onRequestZoneEdit = onRequestZoneEdit;
             this.onRequestBundleEdit = onRequestBundleEdit;
 
-            stateManager.OnPurchaseResponse = OnPurchaseResponse;
+            if (purchaseEnabled)
+                stateManager.SubscribePurchaseResponse(OnPurchaseResponse);
 
             RefreshSidebar();
             foreach (var zone in orderedZones)
@@ -117,10 +120,35 @@ namespace ZoneLockChallenge
         private bool IsNewBundleIndex(int idx) => onRequestBundleEdit != null && idx == orderedZones.Count + customBundles.Count;
         private CustomBundle GetBundleAt(int idx) => customBundles[idx - orderedZones.Count];
 
+        protected override void cleanupBeforeExit()
+        {
+            if (purchaseEnabled)
+                stateManager.UnsubscribePurchaseResponse(OnPurchaseResponse);
+            base.cleanupBeforeExit();
+        }
+
         internal void RefreshSidebar()
         {
+            // Track the selection by ID: a sync from the host can reorder or add entries while
+            // the menu is open, and a positional index would then point at the wrong zone.
+            string prevZoneId = IsZoneIndex(selectedIndex) ? orderedZones[selectedIndex].ZoneId : null;
+            string prevBundleId = IsBundleIndex(selectedIndex) ? GetBundleAt(selectedIndex).BundleId : null;
+
             orderedZones = stateManager.GetOrderedZones();
             customBundles = stateManager.GetCustomBundles().ToList();
+
+            if (prevZoneId != null)
+            {
+                int idx = orderedZones.FindIndex(z => z.ZoneId == prevZoneId);
+                if (idx >= 0) selectedIndex = idx;
+            }
+            else if (prevBundleId != null)
+            {
+                int idx = customBundles.FindIndex(bd => bd.BundleId == prevBundleId);
+                if (idx >= 0) selectedIndex = orderedZones.Count + idx;
+            }
+            if (selectedIndex >= TotalEntries)
+                selectedIndex = Math.Max(0, TotalEntries - 1);
         }
 
         private void SetupLayout()
@@ -345,6 +373,24 @@ namespace ZoneLockChallenge
         {
             base.update(time);
             if (statusMessageTimer > 0) { statusMessageTimer -= time.ElapsedGameTime.Milliseconds; if (statusMessageTimer <= 0) statusMessage = ""; }
+
+            // Don't leave the buttons disabled forever if the host never answers (lag, disconnect).
+            if (waitingForResponse)
+            {
+                responseTimeoutMs -= time.ElapsedGameTime.Milliseconds;
+                if (responseTimeoutMs <= 0)
+                {
+                    waitingForResponse = false;
+                    ShowStatus("No response from the host — please try again.", true);
+                }
+            }
+        }
+
+        private void BeginWaitingForResponse()
+        {
+            waitingForResponse = true;
+            responseTimeoutMs = ResponseTimeoutTotalMs;
+            ShowStatus("Processing...", false);
         }
 
         private void TryPurchaseSelected()
@@ -399,7 +445,7 @@ namespace ZoneLockChallenge
                 ShowStatus(msg, false);
                 Game1.playSound("purchaseClick");
             }
-            else { waitingForResponse = true; ShowStatus("Processing...", false); }
+            else BeginWaitingForResponse();
         }
 
         private void TryPurchaseBundle(CustomBundle bundle)
@@ -421,7 +467,7 @@ namespace ZoneLockChallenge
                 Game1.playSound("purchaseClick");
                 RefreshSidebar();
             }
-            else { waitingForResponse = true; ShowStatus("Processing...", false); }
+            else BeginWaitingForResponse();
         }
 
         private void TryContributeSelected()
@@ -437,25 +483,42 @@ namespace ZoneLockChallenge
             var farmer = Game1.player;
             int scaledCost = stateManager.GetScaledMoneyCost(zone);
             int remaining = scaledCost - stateManager.GetTotalContributions(zone.ZoneId);
-            if (remaining <= 0) { ShowStatus("Already fully funded!", true); return; }
+            bool fullyFunded = remaining <= 0;
+            var items = stateManager.GetEffectiveItems(zone);
 
-            int contribution = Math.Min(farmer.Money, remaining);
-            if (contribution <= 0) { ShowStatus("Not enough gold!", true); return; }
+            if (fullyFunded && items.Count == 0) { ShowStatus("Already fully funded!", true); return; }
+
+            int contribution = fullyFunded ? 0 : Math.Min(farmer.Money, remaining);
+            if (!fullyFunded && contribution <= 0) { ShowStatus("Not enough gold!", true); return; }
+
+            if (fullyFunded)
+            {
+                // Gold goal is met — this click delivers the required items to finish the unlock.
+                foreach (var item in items)
+                {
+                    int have = 0;
+                    foreach (var inv in farmer.Items) if (inv != null && inv.QualifiedItemId == item.ItemId) have += inv.Stack;
+                    if (have < item.Count) { ShowStatus($"Need {item.Count}x {item.DisplayName} (have {have})", true); return; }
+                }
+            }
 
             bool immediate = stateManager.TryContribute(zone.ZoneId, farmer, contribution);
             if (immediate)
             {
-                ShowStatus($"Contributed {contribution}g!", false);
+                ShowStatus(contribution > 0 ? $"Contributed {contribution}g!" : $"{zone.DisplayName} unlocked!", false);
                 Game1.playSound("purchaseClick");
             }
-            else { waitingForResponse = true; ShowStatus("Processing...", false); }
+            else BeginWaitingForResponse();
         }
 
         private void OnPurchaseResponse(ZonePurchaseResponse response)
         {
+            // A stale invocation can arrive for a menu that's no longer active (the request
+            // was sent from a menu the player has since closed) — ignore it.
+            if (Game1.activeClickableMenu != this) return;
             waitingForResponse = false;
             ShowStatus(response.Message, !response.Success);
-            Game1.playSound(response.Success ? "purchaseClick" : "cancel");
+            if (response.Success) Game1.playSound("purchaseClick");
         }
 
         private void ShowStatus(string message, bool isError)
@@ -725,7 +788,7 @@ namespace ZoneLockChallenge
             y += 12;
 
             // Type
-            string typeLabel = zone.UnlockType == "permanent" ? "Permanent Unlock" : "Daily Ticket";
+            string typeLabel = zone.UnlockType == "permanent" ? "Permanent Unlock" : "Daily Ticket (valid for one day)";
             b.DrawString(Game1.smallFont, $"Type: {typeLabel}", new Vector2(x, y), Game1.textColor);
             y += 32;
 
@@ -757,6 +820,12 @@ namespace ZoneLockChallenge
                     b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, 2, barHeight), Color.SaddleBrown * 0.6f);
                     b.Draw(Game1.fadeToBlackRect, new Rectangle(x + barWidth - 2, y, 2, barHeight), Color.SaddleBrown * 0.6f);
                     y += barHeight + 12;
+
+                    if (totalContributed >= scaledCost && stateManager.GetEffectiveItems(zone).Count > 0)
+                    {
+                        b.DrawString(Game1.smallFont, "Fully funded — deliver the items to unlock!", new Vector2(x, y), Color.DarkGoldenrod);
+                        y += 28;
+                    }
                 }
             }
 
@@ -862,7 +931,7 @@ namespace ZoneLockChallenge
             if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
             { status = "UNLOCKED"; statusColor = Color.Green; }
             else if (stateManager.HasActiveTicket(zone.ZoneId, Game1.player.UniqueMultiplayerID))
-            { status = "TICKET ACTIVE TODAY"; statusColor = Color.Green; }
+            { status = "TICKET ACTIVE (expires tonight)"; statusColor = Color.Green; }
             else
             { status = "LOCKED"; statusColor = Color.DarkRed; }
             b.DrawString(Game1.dialogueFont, status, new Vector2(x, y), statusColor);
@@ -902,12 +971,13 @@ namespace ZoneLockChallenge
 
             if (purchaseEnabled && zone.UnlockType == "permanent" && !stateManager.IsZonePermanentlyUnlocked(zone.ZoneId) && stateManager.ArePrerequisitesMet(zone))
             {
-                bool canContribute = Game1.player.Money > 0 && !waitingForResponse;
+                bool funded = stateManager.GetTotalContributions(zone.ZoneId) >= scaledCost;
+                bool canContribute = (funded || Game1.player.Money > 0) && !waitingForResponse;
                 Color cBtnColor = canContribute ? Color.White : Color.Gray * 0.5f;
                 drawTextureBox(b, Game1.mouseCursors, new Rectangle(432, 439, 9, 9),
                     contributeButton.X, contributeButton.Y, contributeButton.Width, contributeButton.Height,
                     cBtnColor, 4f, drawShadow: true);
-                string cBtnText = "Contribute Gold";
+                string cBtnText = funded && effectiveItems.Count > 0 ? "Deliver Items" : "Contribute Gold";
                 Vector2 cBtnSize = Game1.smallFont.MeasureString(cBtnText);
                 b.DrawString(Game1.smallFont, cBtnText,
                     new Vector2(contributeButton.X + (contributeButton.Width - cBtnSize.X) / 2,
@@ -915,19 +985,21 @@ namespace ZoneLockChallenge
                     canContribute ? Color.DarkSlateGray : Color.Gray);
             }
 
-            // Host-only links: "Move Plate" and "Edit Zone"
-            if (onRequestPlatePlacement != null)
+            // Plate location: shown to everyone so any player can find where to buy
             {
                 var plate = stateManager.GetEffectivePlate(zone);
                 string plateInfo = plate != null ? $"{plate.LocationName} ({plate.X}, {plate.Y})" : "not set";
-                int infoY = purchaseButton.bounds.Bottom + 12;
-
-                // Plate location info
                 string infoText = $"Plate: {plateInfo}";
                 Vector2 infoSize = Game1.smallFont.MeasureString(infoText);
                 b.DrawString(Game1.smallFont, infoText,
-                    new Vector2(purchaseButton.bounds.X + (purchaseButton.bounds.Width - infoSize.X) / 2, infoY),
+                    new Vector2(purchaseButton.bounds.X + (purchaseButton.bounds.Width - infoSize.X) / 2, purchaseButton.bounds.Bottom + 12),
                     Color.Gray);
+            }
+
+            // Host-only links: "Move Plate" and "Edit Zone"
+            if (onRequestPlatePlacement != null)
+            {
+                int infoY = purchaseButton.bounds.Bottom + 12;
 
                 // "Move Plate" and "Edit Zone" links side by side
                 string moveText = "Move Plate";

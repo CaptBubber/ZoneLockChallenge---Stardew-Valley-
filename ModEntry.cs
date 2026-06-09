@@ -80,6 +80,24 @@ namespace ZoneLockChallenge
                 "Manually lock a zone (host only). Usage: zlc_lock <ZoneId>\nUse 'zlc_lock list' to see all zone IDs and their status.",
                 OnLockCommand);
 
+            helper.ConsoleCommands.Add("zlc_status",
+                "Show the full mod state: zones, contributions, tickets, bundles, and mine gates.",
+                OnStatusCommand);
+
+            helper.ConsoleCommands.Add("zlc_unlock_all",
+                "Unlock every permanent zone at once (host only). Useful for testing a setup before a run.",
+                OnUnlockAllCommand);
+
+            helper.ConsoleCommands.Add("zlc_reset_zone",
+                "Clear a zone's in-game cost/item edits and pooled gold, reverting to config defaults (host only). Usage: zlc_reset_zone <ZoneId>",
+                OnResetZoneCommand);
+
+            helper.ConsoleCommands.Add("zlc_reload",
+                "Re-read config.json and refresh content assets without restarting the game.",
+                OnReloadCommand);
+
+            ValidateConfig();
+
             Monitor.Log("Zone Lock Challenge loaded. Press " + config.OpenMenuKey + " to view zones. Visit zone plates to purchase.", LogLevel.Info);
         }
 
@@ -592,6 +610,122 @@ namespace ZoneLockChallenge
             {
                 string status = stateManager.IsZonePermanentlyUnlocked(zone.ZoneId) ? "UNLOCKED" : "LOCKED";
                 Monitor.Log($"  {zone.ZoneId} — {zone.DisplayName} — {status}", LogLevel.Info);
+            }
+        }
+
+        private void OnStatusCommand(string command, string[] args)
+        {
+            if (!Context.IsWorldReady) { Monitor.Log("You must be in-game to use this command.", LogLevel.Warn); return; }
+
+            Monitor.Log("=== Zone Lock Challenge status ===", LogLevel.Info);
+            foreach (var zone in stateManager.GetContentZones())
+            {
+                string status;
+                if (stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
+                    status = "UNLOCKED";
+                else
+                {
+                    int scaled = stateManager.GetScaledMoneyCost(zone);
+                    int pooled = stateManager.GetTotalContributions(zone.ZoneId);
+                    status = pooled > 0 ? $"LOCKED — {pooled:N0}/{scaled:N0}g pooled" : $"LOCKED — {scaled:N0}g";
+                    if (zone.UnlockType == "ticket") status = $"TICKET ZONE — {scaled:N0}g/day";
+                }
+                string overridden = stateManager.State.ZoneOverrides.ContainsKey(zone.ZoneId) ? " [edited in-game]" : "";
+                Monitor.Log($"  {zone.ZoneId} — {zone.DisplayName} — {status}{overridden}", LogLevel.Info);
+            }
+
+            if (stateManager.State.ActiveTickets.Count > 0)
+            {
+                Monitor.Log("Active tickets:", LogLevel.Info);
+                foreach (var kv in stateManager.State.ActiveTickets)
+                    foreach (var ticket in kv.Value)
+                    {
+                        var farmer = Game1.getAllFarmers().FirstOrDefault(f => f.UniqueMultiplayerID == ticket.Key);
+                        string who = farmer?.Name ?? $"Player {ticket.Key}";
+                        string valid = ticket.Value == Game1.Date.TotalDays ? "valid today" : "expired";
+                        Monitor.Log($"  {kv.Key}: {who} ({valid})", LogLevel.Info);
+                    }
+            }
+
+            var bundles = stateManager.GetCustomBundles();
+            if (bundles.Count > 0)
+            {
+                Monitor.Log("Custom bundles:", LogLevel.Info);
+                foreach (var bundle in bundles)
+                    Monitor.Log($"  {bundle.DisplayName} — {(bundle.IsCompleted ? "COMPLETED" : "incomplete")}", LogLevel.Info);
+            }
+
+            var gates = stateManager.GetEffectiveMineLevelGates();
+            if (gates.Count > 0)
+            {
+                int mining = stateManager.GetCollectiveSkillLevel("Mining");
+                Monitor.Log($"Mine gates (collective Mining: {mining}):", LogLevel.Info);
+                foreach (var gate in gates.OrderBy(g => g.FloorNumber))
+                    Monitor.Log($"  Floor {gate.FloorNumber}: requires Mining {gate.RequiredMiningLevel}{(mining >= gate.RequiredMiningLevel ? " (met)" : "")}", LogLevel.Info);
+            }
+        }
+
+        private void OnUnlockAllCommand(string command, string[] args)
+        {
+            if (!Context.IsWorldReady) { Monitor.Log("You must be in-game to use this command.", LogLevel.Warn); return; }
+            if (!Context.IsMainPlayer) { Monitor.Log("Only the host can unlock zones.", LogLevel.Warn); return; }
+            int count = stateManager.AdminUnlockAll();
+            Monitor.Log(count > 0 ? $"Unlocked {count} zone(s)." : "All permanent zones are already unlocked.", LogLevel.Info);
+        }
+
+        private void OnResetZoneCommand(string command, string[] args)
+        {
+            if (!Context.IsWorldReady) { Monitor.Log("You must be in-game to use this command.", LogLevel.Warn); return; }
+            if (!Context.IsMainPlayer) { Monitor.Log("Only the host can reset zones.", LogLevel.Warn); return; }
+            if (args.Length == 0) { Monitor.Log("Usage: zlc_reset_zone <ZoneId>", LogLevel.Warn); return; }
+
+            var zone = stateManager.GetContentZones().FirstOrDefault(z => z.ZoneId.Equals(args[0], StringComparison.OrdinalIgnoreCase));
+            if (zone == null) { Monitor.Log($"Unknown zone '{args[0]}'. Use 'zlc_unlock list' to see valid zone IDs.", LogLevel.Warn); return; }
+
+            bool changed = stateManager.AdminResetZone(zone.ZoneId);
+            Monitor.Log(changed
+                ? $"Zone '{zone.ZoneId}' reset to config defaults (in-game edits and pooled gold cleared)."
+                : $"Zone '{zone.ZoneId}' had no in-game edits or pooled gold to clear.", LogLevel.Info);
+        }
+
+        private void OnReloadCommand(string command, string[] args)
+        {
+            var fresh = Helper.ReadConfig<ModConfig>();
+            // Other classes hold a reference to the existing config object, so copy the values
+            // onto it rather than swapping the reference.
+            config.OpenMenuKey = fresh.OpenMenuKey;
+            config.ShowBlockedMessage = fresh.ShowBlockedMessage;
+            config.PreventFriendshipDecay = fresh.PreventFriendshipDecay;
+            config.CostScalingPercent = fresh.CostScalingPercent;
+            config.BeachMinecart = fresh.BeachMinecart;
+            config.SecondaryBeachBypass = fresh.SecondaryBeachBypass;
+            config.MineLevelGates = fresh.MineLevelGates;
+            config.Zones = fresh.Zones;
+
+            contentProvider.InvalidateAllCaches();
+            ValidateConfig();
+            Monitor.Log("Reloaded config.json and refreshed content assets. Note: in-game zone edits (save overrides) still take precedence over config values.", LogLevel.Info);
+        }
+
+        /// <summary>Warn about config values that would silently misbehave in-game.</summary>
+        private void ValidateConfig()
+        {
+            if (!Enum.TryParse<SButton>(config.OpenMenuKey, ignoreCase: true, out _))
+                Monitor.Log($"Config OpenMenuKey '{config.OpenMenuKey}' is not a valid key name — the zone overview hotkey will not work. See https://stardewvalleywiki.com/Modding:Player_Guide/Key_Bindings", LogLevel.Warn);
+
+            var zones = config.Zones ?? new List<ZoneDefinition>();
+            var ids = new HashSet<string>(zones.Where(z => !string.IsNullOrEmpty(z.ZoneId)).Select(z => z.ZoneId));
+            foreach (var zone in zones)
+            {
+                if (string.IsNullOrEmpty(zone.ZoneId))
+                {
+                    Monitor.Log($"A zone in config.json ('{zone.DisplayName ?? "?"}') has no ZoneId and will be ignored.", LogLevel.Warn);
+                    continue;
+                }
+                if (zone.MoneyCost < 0)
+                    Monitor.Log($"Zone '{zone.ZoneId}' has a negative MoneyCost ({zone.MoneyCost}); it will be treated as 0.", LogLevel.Warn);
+                if (!string.IsNullOrEmpty(zone.RequiresZone) && !ids.Contains(zone.RequiresZone))
+                    Monitor.Log($"Zone '{zone.ZoneId}' requires unknown zone '{zone.RequiresZone}' — it can never be unlocked.", LogLevel.Warn);
             }
         }
 

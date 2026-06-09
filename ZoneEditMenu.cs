@@ -42,6 +42,11 @@ namespace ZoneLockChallenge
         private TextBox itemIdTextBox;
         private int addCount = 1;
 
+        // Transient feedback ("Unknown item ID...") shown near the Save/Cancel buttons
+        private string editorStatus = "";
+        private int editorStatusTimer;
+        private bool editorStatusIsError;
+
         // Layout rects
         private int innerX, innerY, innerWidth, innerHeight;
         private Rectangle inventoryBounds;
@@ -361,16 +366,35 @@ namespace ZoneLockChallenge
                     AddItemToList(testItem.QualifiedItemId, testItem.DisplayName, addCount);
                     CacheItem(testItem.QualifiedItemId);
                     itemIdTextBox.Text = "";
+                    ShowEditorStatus($"Added {testItem.DisplayName} x{addCount}", isError: false);
                     Game1.playSound("smallSelect");
                 }
                 else
                 {
-                    Game1.playSound("cancel");
+                    ShowEditorStatus($"Unknown item ID '{itemId}'", isError: true);
                 }
             }
             catch
             {
-                Game1.playSound("cancel");
+                ShowEditorStatus($"Unknown item ID '{itemId}'", isError: true);
+            }
+        }
+
+        private void ShowEditorStatus(string message, bool isError)
+        {
+            editorStatus = message;
+            editorStatusIsError = isError;
+            editorStatusTimer = 3000;
+            if (isError) Game1.playSound("cancel");
+        }
+
+        public override void update(GameTime time)
+        {
+            base.update(time);
+            if (editorStatusTimer > 0)
+            {
+                editorStatusTimer -= time.ElapsedGameTime.Milliseconds;
+                if (editorStatusTimer <= 0) editorStatus = "";
             }
         }
 
@@ -485,12 +509,12 @@ namespace ZoneLockChallenge
             string text = gateFloorTextBox.Text.Trim();
             if (!int.TryParse(text, out int floor) || floor <= 0)
             {
-                Game1.playSound("cancel");
+                ShowEditorStatus("Floor must be a positive number", isError: true);
                 return;
             }
             if (editMineGates.Any(g => g.FloorNumber == floor))
             {
-                Game1.playSound("cancel");
+                ShowEditorStatus($"Floor {floor} already has a gate", isError: true);
                 return;
             }
             editMineGates.Add(new MineLevelGate { FloorNumber = floor, RequiredMiningLevel = 1 });
@@ -604,6 +628,11 @@ namespace ZoneLockChallenge
             // ── Save / Cancel buttons ──
             DrawButton(b, saveBtnBounds, "Save", Color.Green);
             DrawButton(b, cancelBtnBounds, "Cancel", Color.IndianRed);
+
+            if (!string.IsNullOrEmpty(editorStatus))
+                b.DrawString(Game1.smallFont, editorStatus,
+                    new Vector2(innerX, saveBtnBounds.Y + 8),
+                    editorStatusIsError ? Color.DarkRed : Color.DarkGreen);
 
             drawMouse(b);
         }

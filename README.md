@@ -8,10 +8,10 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 - **Zone plates** appear in the world at configurable locations. Walk up to a plate and interact with it to open the purchase menu for that zone.
 - **Press K** (configurable) anywhere to open the **Zone Overview** menu (read-only view of all zones).
 - **Permanent unlocks** cost gold and items — once bought, the zone stays open forever. The plate disappears after purchase.
-- **Ticket zones** (like Pelican Town) require buying a daily ticket each in-game day.
+- **Ticket zones** (like Pelican Town) require buying a daily ticket each in-game day. A ticket is valid only for the day it's bought — a 9pm HUD reminder warns you before it lapses, and if you wake up inside a zone you no longer have access to (e.g. after passing out in town), you're warped back to the farm.
 - **Prerequisites**: some zones require others to be unlocked first, and some require a collective skill level across all players.
 - **Multiplayer**: zone unlocks are shared across all players. Any player can buy unlocks. The host's save stores all data and syncs to farmhands automatically.
-- **Festivals**: during active festival events, zone locks are suspended so every player can attend.
+- **Festivals**: on festival days, zone locks are lifted for the whole day so everyone can travel to and attend the festival (announced by a morning HUD message).
 
 ## Features
 
@@ -23,7 +23,7 @@ A multiplayer-compatible challenge mod that locks all zones except the farm. Unl
 - Cost scaling — each zone unlocked increases the price of remaining zones (configurable percentage)
 - Full multiplayer sync (host-authoritative, farmhands send purchase requests)
 - **Purchase notifications** — when any player unlocks a zone or completes a bundle, all players see a HUD notification (e.g. "Player X unlocked The Beach!")
-- **Group unlock** — in multiplayer, players can pool gold toward a permanent zone unlock instead of one person paying the full cost. A "Contribute Gold" button and progress bar appear for locked permanent zones. The zone auto-unlocks when the pooled total meets the cost (the contributing player who pushes it over must also have any required items)
+- **Group unlock** — in multiplayer, players can pool gold toward a permanent zone unlock instead of one person paying the full cost. A "Contribute Gold" button and progress bar appear for locked permanent zones. The zone auto-unlocks when the pooled total meets the cost, if the contributing player also carries any required items. If the gold goal is reached but the items are missing, the button becomes **"Deliver Items"** — any player can finish the unlock later by clicking it while carrying the items
 
 ### Mine Floor Gating
 - Every 25 mine levels (25, 50, 75, 100) is gated by the group's collective Mining skill level
@@ -188,7 +188,19 @@ The `BeachMinecart` config controls the Mountain ↔ Beach warp signs:
 }
 ```
 
-An optional `SecondaryBeachBypass` with the same structure (but `Enabled: false` by default) can add a second warp pair between the beach and any other location.
+An optional `SecondaryBeachBypass` (disabled by default) adds a second warp pair between the beach and any other location:
+
+```json
+"SecondaryBeachBypass": {
+    "Enabled": false,
+    "BeachLocation": "Beach",
+    "BeachSignX": 4, "BeachSignY": 4,
+    "BeachArrivalX": 4, "BeachArrivalY": 4,
+    "OtherLocation": "Backwoods",
+    "OtherSignX": 10, "OtherSignY": 10,
+    "OtherArrivalX": 10, "OtherArrivalY": 10
+}
+```
 
 ### Common Item IDs
 
@@ -209,9 +221,13 @@ An optional `SecondaryBeachBypass` with the same structure (but `Enabled: false`
 
 | Command | Description |
 |---------|-------------|
-| `zlc_moveplate <ZoneId>` | Enter plate placement mode — click any tile in-game to move that zone's plate. Use `zlc_moveplate list` to see zone IDs. Host only. |
+| `zlc_moveplate <ZoneId>` | Enter plate placement mode — click any tile in-game to move that zone's plate (Esc cancels). Use `zlc_moveplate list` to see zone IDs. Host only. |
 | `zlc_unlock <ZoneId>` | Manually unlock a zone permanently (bypasses cost/items). Use `zlc_unlock list` to see all zones and their status. Host only. |
 | `zlc_lock <ZoneId>` | Manually re-lock a previously unlocked zone. Use `zlc_lock list` to see all zones and their status. Host only. |
+| `zlc_unlock_all` | Unlock every permanent zone at once — useful for testing a setup before a run. Host only. |
+| `zlc_status` | Print the full mod state: every zone with cost/pooled gold, active tickets, custom bundles, and mine gates. |
+| `zlc_reset_zone <ZoneId>` | Clear a zone's in-game cost/item edits and pooled contributions, reverting it to config defaults (does not change locked/unlocked state). Host only. |
+| `zlc_reload` | Re-read `config.json` and refresh content assets without restarting the game. In-game zone edits still take precedence. |
 
 ## Troubleshooting
 
@@ -221,12 +237,35 @@ An optional `SecondaryBeachBypass` with the same structure (but `Enabled: false`
 - **"Farmhand can't buy unlocks"**: The purchase request goes to the host. Make sure the host is online and has the same mod version.
 - **"Mine floor gate not working"**: Check that the Mine zone is unlocked first — mine floor gates only apply within the unlocked Mine zone.
 
+## Content Patcher Integration
+
+The mod exposes its data through standard game assets, so Content Patcher packs (or other mods) can re-theme an entire challenge without touching `config.json`:
+
+| Asset | Type | Contents |
+|-------|------|----------|
+| `Mods/ZoneLockChallenge/ZoneData` | dictionary (`ZoneId` → zone) | Zone definitions: `DisplayName`, `BundleName`, `Description`, `UnlockType`, `MoneyCost`, `Items`, `LocationNames`, `LocationPrefixes`, `RequiresZone`, `RequiredSkill`, `RequiredSkillLevel`, `PlateLocation`, `PlateX`, `PlateY` |
+| `Mods/ZoneLockChallenge/Rewards` | dictionary (`ZoneId` → rewards) | Per-zone unlock rewards: `{ "Items": [ { ItemId, DisplayName, Count } ] }`. Note: rewards live in this **separate** asset, not in `ZoneData` |
+| `Mods/ZoneLockChallenge/MineGates` | list | Mine floor gates: `{ FloorNumber, RequiredMiningLevel }` |
+| `Mods/ZoneLockChallenge/Sprites` | texture | Plate and warp-sign sprites (16×16 each: permanent plate, ticket plate, sign) |
+
+Example Content Patcher patch raising the Beach cost:
+
+```json
+{
+    "Action": "EditData",
+    "Target": "Mods/ZoneLockChallenge/ZoneData",
+    "Fields": { "Beach": { "MoneyCost": 9999 } }
+}
+```
+
+In-game zone edits made by the host (save overrides) still take precedence over patched assets.
+
 ## Known Limitations
 
-- During active festival events, zone locks are bypassed so players can attend. Zones remain locked at other times on festival days.
+- On festival days, zone locks are lifted for the entire day (so players can travel to the festival).
 - Warp totems and the return scepter are caught by the warp interceptor.
 - If you remove a zone from the config after unlocking it, locations in that zone become freely accessible (since they no longer match any zone definition).
-- In-game zone overrides (costs, items, rewards, plate positions, zone order, mine gates) are stored in the host's save data. Changing `config.json` only affects defaults — overrides take precedence.
+- In-game zone overrides (costs, items, rewards, plate positions, zone order, mine gates) are stored in the host's save data. Changing `config.json` only affects defaults — overrides take precedence. Use `zlc_reset_zone <ZoneId>` to clear a zone's override.
 
 ## License
 

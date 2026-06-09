@@ -244,6 +244,41 @@ namespace ZoneLockChallenge
             OnStateChanged?.Invoke();
         }
 
+        /// <summary>Unlock every permanent zone at once (testing helper). Single broadcast.</summary>
+        public int AdminUnlockAll()
+        {
+            if (!Context.IsMainPlayer) return 0;
+            int count = 0;
+            foreach (var zone in GetContentZones())
+            {
+                if (zone.UnlockType != "permanent" || State.UnlockedZones.Contains(zone.ZoneId)) continue;
+                State.UnlockedZones.Add(zone.ZoneId);
+                State.ZoneContributions.Remove(zone.ZoneId);
+                count++;
+            }
+            if (count > 0)
+            {
+                SaveAndBroadcast();
+                OnStateChanged?.Invoke();
+            }
+            return count;
+        }
+
+        /// <summary>Clear a zone's in-game cost/item override and pooled contributions, reverting
+        /// it to its config/content defaults. Does not change the locked/unlocked state.</summary>
+        public bool AdminResetZone(string zoneId)
+        {
+            if (!Context.IsMainPlayer) return false;
+            bool removedOverride = State.ZoneOverrides.Remove(zoneId);
+            bool removedContribs = State.ZoneContributions.Remove(zoneId);
+            if (removedOverride || removedContribs)
+            {
+                SaveAndBroadcast();
+                OnStateChanged?.Invoke();
+            }
+            return removedOverride || removedContribs;
+        }
+
         /// <summary>Get the effective plate position for a zone (override from save data, or config default).</summary>
         public PlateTile GetEffectivePlate(ZoneDefinition zone)
         {
@@ -271,7 +306,7 @@ namespace ZoneLockChallenge
                 try
                 {
                     var data = contentProvider.LoadZoneData();
-                    return data.Select(kv => new ZoneDefinition
+                    return data.Where(kv => !string.IsNullOrEmpty(kv.Key)).Select(kv => new ZoneDefinition
                     {
                         ZoneId = kv.Key,
                         DisplayName = kv.Value.DisplayName,
@@ -293,7 +328,8 @@ namespace ZoneLockChallenge
                 }
                 catch (Exception ex) { monitor.Log($"Failed to load zone data from content: {ex.Message}", LogLevel.Warn); }
             }
-            return config.Zones;
+            // A zone with no ZoneId can't be referenced and would NRE in location matching
+            return config.Zones.Where(z => !string.IsNullOrEmpty(z.ZoneId)).ToList();
         }
 
         public ZoneDefinition GetZoneById(string zoneId)
@@ -306,7 +342,7 @@ namespace ZoneLockChallenge
             if (string.IsNullOrEmpty(locationName)) return null;
             foreach (var zone in GetContentZones())
             {
-                if (zone.LocationNames.Any(n => string.Equals(n, locationName, StringComparison.OrdinalIgnoreCase)))
+                if (zone.LocationNames != null && zone.LocationNames.Any(n => string.Equals(n, locationName, StringComparison.OrdinalIgnoreCase)))
                     return zone;
                 if (zone.LocationPrefixes != null)
                     foreach (var prefix in zone.LocationPrefixes)
@@ -348,12 +384,13 @@ namespace ZoneLockChallenge
             return total;
         }
 
-        /// <summary>Get the effective base gold cost for a zone (override or config default).</summary>
+        /// <summary>Get the effective base gold cost for a zone (override or config default).
+        /// Clamped at 0: a hand-edited negative cost would make the zone unpurchaseable.</summary>
         public int GetEffectiveBaseCost(ZoneDefinition zone)
         {
             if (State.ZoneOverrides.TryGetValue(zone.ZoneId, out var ov) && ov.MoneyCost.HasValue)
-                return ov.MoneyCost.Value;
-            return zone.MoneyCost;
+                return Math.Max(0, ov.MoneyCost.Value);
+            return Math.Max(0, zone.MoneyCost);
         }
 
         /// <summary>Get the effective item requirements for a zone (override or config default).</summary>

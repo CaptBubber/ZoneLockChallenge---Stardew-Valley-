@@ -1038,6 +1038,18 @@ namespace ZoneLockChallenge
                 BroadcastState();
         }
 
+        /// <summary>Returns zone IDs where the local player holds a ticket valid today. Read-only.</summary>
+        public List<string> GetLocalActiveTicketZones()
+        {
+            int today = Game1.Date.TotalDays;
+            long localId = Game1.player.UniqueMultiplayerID;
+            var result = new List<string>();
+            foreach (var kv in State.ActiveTickets)
+                if (kv.Value.TryGetValue(localId, out int day) && day == today)
+                    result.Add(kv.Key);
+            return result;
+        }
+
         /// <summary>Returns zone IDs where the local player had a ticket yesterday (or earlier) that no longer applies today. Read-only — does not modify state.</summary>
         public List<string> GetLocalExpiredTicketZones()
         {

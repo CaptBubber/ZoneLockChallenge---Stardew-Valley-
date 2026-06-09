@@ -31,6 +31,17 @@ namespace ZoneLockChallenge
         // Friendship decay prevention: snapshot taken on DayEnding, restored on DayStarted
         private Dictionary<string, int> friendshipSnapshot = new();
 
+        // Farmhand only: tickets that were active when the day ended. The host's overnight
+        // cleanup broadcast can arrive before our DayStarted fires, wiping the expired entries
+        // before GetLocalExpiredTicketZones() can see them — so snapshot at DayEnding.
+        private List<string> ticketsActiveAtDayEnd = new();
+
+        // Cooldown so repeated bumps into a locked border don't stack HUD messages
+        private float lastBlockedMsgAt = -999f;
+        private string lastBlockedMsgKey = "";
+
+        private bool shownStartupHint;
+
         public override void Entry(IModHelper helper)
         {
             config = helper.ReadConfig<ModConfig>();
@@ -54,6 +65,7 @@ namespace ZoneLockChallenge
             helper.Events.Display.RenderedWorld += OnRenderedWorld;
             helper.Events.GameLoop.UpdateTicking += OnUpdateTicking;
             helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
+            helper.Events.GameLoop.TimeChanged += OnTimeChanged;
             helper.Events.Content.AssetsInvalidated += contentProvider.OnAssetInvalidated;
 
             helper.ConsoleCommands.Add("zlc_moveplate",
@@ -79,6 +91,12 @@ namespace ZoneLockChallenge
             stateManager.RecordStatsSnapshot(Game1.player);
             if (!Context.IsMainPlayer)
                 stateManager.RequestSync();
+
+            if (!shownStartupHint)
+            {
+                shownStartupHint = true;
+                Game1.addHUDMessage(new HUDMessage($"Zone Lock Challenge active — press {config.OpenMenuKey} to view zones.", HUDMessage.newQuest_type));
+            }
         }
 
         private void OnSaving(object sender, SavingEventArgs e) => stateManager.SaveState();
@@ -87,13 +105,19 @@ namespace ZoneLockChallenge
         {
             var expired = Context.IsMainPlayer
                 ? stateManager.CleanupExpiredTickets()
-                : stateManager.GetLocalExpiredTicketZones();
+                : stateManager.GetLocalExpiredTicketZones().Union(ticketsActiveAtDayEnd).ToList();
+            ticketsActiveAtDayEnd = new List<string>();
             foreach (var zoneId in expired)
             {
                 var zone = stateManager.GetZoneById(zoneId);
                 if (zone != null)
                     Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
             }
+
+            if (Utility.isFestivalDay())
+                Game1.addHUDMessage(new HUDMessage("Festival today — zone locks are lifted for the day!", HUDMessage.newQuest_type));
+
+            EvictFromLockedZone();
 
             // Restore friendship points that decreased overnight (prevents daily decay)
             if (config.PreventFriendshipDecay && friendshipSnapshot.Count > 0)
@@ -121,10 +145,42 @@ namespace ZoneLockChallenge
         {
             stateManager.RecordStatsSnapshot(Game1.player);
 
+            if (!Context.IsMainPlayer)
+                ticketsActiveAtDayEnd = stateManager.GetLocalActiveTicketZones();
+
             if (!config.PreventFriendshipDecay) return;
             friendshipSnapshot.Clear();
             foreach (var kvp in Game1.player.friendshipData.Pairs)
                 friendshipSnapshot[kvp.Key] = kvp.Value.Points;
+        }
+
+        /// <summary>At 9pm, remind the player that their daily tickets lapse overnight.</summary>
+        private void OnTimeChanged(object sender, TimeChangedEventArgs e)
+        {
+            if (e.NewTime != 2100) return;
+            foreach (var zoneId in stateManager.GetLocalActiveTicketZones())
+            {
+                var zone = stateManager.GetZoneById(zoneId);
+                if (zone != null)
+                    Game1.addHUDMessage(new HUDMessage($"Your {zone.DisplayName} ticket expires at the end of the day.", HUDMessage.newQuest_type));
+            }
+        }
+
+        /// <summary>If the player wakes up inside a now-locked zone (overnight hospital respawn,
+        /// expired ticket after passing out in town), warp them home. OnPlayerWarped can't catch
+        /// this because no warp event fires on wake-up.</summary>
+        private void EvictFromLockedZone()
+        {
+            string locName = Game1.currentLocation?.Name;
+            if (locName == null || IsFarmLocation(locName)) return;
+            if (Utility.isFestivalDay()) return;
+
+            var zone = stateManager.GetZoneForLocation(locName);
+            if (zone == null || stateManager.IsZoneAccessible(zone.ZoneId, Game1.player.UniqueMultiplayerID)) return;
+
+            Game1.warpFarmer("Farm", 64, 15, false);
+            Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} is locked — you were returned to the farm.", HUDMessage.error_type));
+            Monitor.Log($"Evicted {Game1.player.Name} from locked zone '{zone.ZoneId}' at day start.", LogLevel.Info);
         }
 
         private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e) { isWarpingBack = false; warpBackFramesLeft = 0; friendshipSnapshot.Clear(); }
@@ -187,7 +243,10 @@ namespace ZoneLockChallenge
 
             if (IsFarmLocation(newLocationName)) return;
 
-            if (Utility.isFestivalDay() && Game1.eventUp)
+            // Festival days lift all zone locks for the whole day: festivals are often deep
+            // inside locked zones (Town, Beach), and gating on Game1.eventUp would bounce
+            // players walking to the festival before the event has started.
+            if (Utility.isFestivalDay())
                 return;
 
             long farmerId = Game1.player.UniqueMultiplayerID;
@@ -204,11 +263,10 @@ namespace ZoneLockChallenge
                     int current = stateManager.GetCollectiveSkillLevel("Mining");
                     Monitor.Log($"Blocked {Game1.player.Name} from mine floor {mineFloor} (need collective Mining {required}, have {current}).", LogLevel.Info);
 
-                    if (config.ShowBlockedMessage)
-                        Game1.addHUDMessage(new HUDMessage($"Floor {mineFloor} is gated! Need collective Mining level {required} (have {current}).", HUDMessage.error_type));
+                    ShowBlockedMessage($"mine_{mineFloor}", $"Floor {mineFloor} is gated! Need collective Mining level {required} (have {current}).");
 
                     isWarpingBack = true;
-                    warpBackFramesLeft = 3;
+                    warpBackFramesLeft = 12;
                     Game1.warpFarmer(oldLocationName, lastSafeX, lastSafeY, false);
                 }
                 return;
@@ -216,11 +274,10 @@ namespace ZoneLockChallenge
 
             Monitor.Log($"Blocked {Game1.player.Name} from entering {newLocationName} (zone: {zone.ZoneId} is locked).", LogLevel.Info);
 
-            if (config.ShowBlockedMessage)
-                Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} is locked! Visit the zone plate to unlock it.", HUDMessage.error_type));
+            ShowBlockedMessage($"zone_{zone.ZoneId}", $"{zone.DisplayName} is locked! Visit the zone plate to unlock it.");
 
             isWarpingBack = true;
-            warpBackFramesLeft = 3; // keep flag up long enough for the return warp to complete
+            warpBackFramesLeft = 12; // keep flag up long enough for the return warp to complete, even on a lag spike
 
             // Check if old location is safe to return to (e.g. died in mines → hospital blocked → mines also blocked)
             var oldZone = stateManager.GetZoneForLocation(oldLocationName);
@@ -248,11 +305,31 @@ namespace ZoneLockChallenge
                             break;
                         }
                     }
-                    if (!foundWarp)
+
+                    var layer = e.OldLocation.Map?.Layers?.Count > 0 ? e.OldLocation.Map.Layers[0] : null;
+                    if (foundWarp && layer != null)
                     {
-                        // Fallback: use center of old map
-                        warpX = e.OldLocation.Map.Layers[0].LayerWidth / 2;
-                        warpY = e.OldLocation.Map.Layers[0].LayerHeight / 2;
+                        // Landing exactly on the warp trigger tile would immediately re-fire the
+                        // warp into the locked zone (bounce loop), and trigger tiles often sit in
+                        // doorframes or at map edges. Step one tile toward the map interior.
+                        warpX += Math.Sign(layer.LayerWidth / 2 - warpX);
+                        warpY += Math.Sign(layer.LayerHeight / 2 - warpY);
+                    }
+                    else if (!foundWarp)
+                    {
+                        // No warp found: prefer the last tracked safe spot if its location is
+                        // still accessible (map centers are frequently water or buildings).
+                        var lastSafeZone = stateManager.GetZoneForLocation(lastSafeLocationName);
+                        bool lastSafeOk = IsFarmLocation(lastSafeLocationName)
+                            || lastSafeZone == null
+                            || stateManager.IsZoneAccessible(lastSafeZone.ZoneId, farmerId);
+                        if (lastSafeOk)
+                        {
+                            Game1.warpFarmer(lastSafeLocationName, lastSafeX, lastSafeY, false);
+                            return;
+                        }
+                        Game1.warpFarmer("Farm", 64, 15, false);
+                        return;
                     }
                 }
 
@@ -260,6 +337,17 @@ namespace ZoneLockChallenge
             }
             else
                 Game1.warpFarmer("Farm", 64, 15, false);
+        }
+
+        /// <summary>Show a blocked-entry HUD message, but not more than once per few seconds for
+        /// the same target — repeatedly bumping a locked border shouldn't stack red messages.</summary>
+        private void ShowBlockedMessage(string key, string message)
+        {
+            if (!config.ShowBlockedMessage) return;
+            if (key == lastBlockedMsgKey && plateAnimTimer - lastBlockedMsgAt < 3f) return;
+            lastBlockedMsgKey = key;
+            lastBlockedMsgAt = plateAnimTimer;
+            Game1.addHUDMessage(new HUDMessage(message, HUDMessage.error_type));
         }
 
         private bool IsFarmLocation(string name) =>
@@ -281,6 +369,15 @@ namespace ZoneLockChallenge
         private void OnButtonPressed(object sender, ButtonPressedEventArgs e)
         {
             if (!Context.IsWorldReady || Game1.activeClickableMenu != null) return;
+
+            // Escape cancels plate placement mode (otherwise the only way out is placing the plate)
+            if (platePlacementZoneId != null && (e.Button == SButton.Escape || e.Button == SButton.ControllerB))
+            {
+                platePlacementZoneId = null;
+                Game1.addHUDMessage(new HUDMessage("Plate placement cancelled.", HUDMessage.newQuest_type));
+                Helper.Input.Suppress(e.Button);
+                return;
+            }
 
             // Action button: check plates and minecart signs
             if (e.Button.IsActionButton())
@@ -323,7 +420,14 @@ namespace ZoneLockChallenge
                     // Plate found!
                     if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
                     {
-                        // Plate already completed — don't show anything (plate has "disappeared")
+                        // Plate completed and no longer drawn — give light feedback instead of
+                        // silently swallowing the click (cooldown stops it from spamming)
+                        if (lastBlockedMsgKey != $"plate_{zone.ZoneId}" || plateAnimTimer - lastBlockedMsgAt >= 3f)
+                        {
+                            lastBlockedMsgKey = $"plate_{zone.ZoneId}";
+                            lastBlockedMsgAt = plateAnimTimer;
+                            Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} is already unlocked.", HUDMessage.newQuest_type));
+                        }
                         return;
                     }
 
@@ -435,7 +539,7 @@ namespace ZoneLockChallenge
             }
 
             platePlacementZoneId = targetZone.ZoneId;
-            Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{targetZone.DisplayName}' plate.", HUDMessage.newQuest_type));
+            Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{targetZone.DisplayName}' plate (Esc to cancel).", HUDMessage.newQuest_type));
             Monitor.Log($"Plate placement mode active for '{targetZone.ZoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);
         }
 
@@ -513,7 +617,7 @@ namespace ZoneLockChallenge
             platePlacementZoneId = zoneId;
             var zone = stateManager.GetZoneById(zoneId);
             string name = zone?.DisplayName ?? zoneId;
-            Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{name}' plate.", HUDMessage.newQuest_type));
+            Game1.addHUDMessage(new HUDMessage($"Click a tile to place the '{name}' plate (Esc to cancel).", HUDMessage.newQuest_type));
             Monitor.Log($"Plate placement mode active for '{zoneId}'. Click any tile in-game to set the plate location.", LogLevel.Info);
         }
 

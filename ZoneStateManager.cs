@@ -106,9 +106,6 @@ namespace ZoneLockChallenge
         /// subscription while its request is still in flight.</summary>
         public event Action<ZonePurchaseResponse> OnPurchaseResponse;
 
-        public void SubscribePurchaseResponse(Action<ZonePurchaseResponse> handler) => OnPurchaseResponse += handler;
-        public void UnsubscribePurchaseResponse(Action<ZonePurchaseResponse> handler) => OnPurchaseResponse -= handler;
-
         public ZoneStateManager(IModHelper helper, IMonitor monitor, ModConfig config, ContentProvider contentProvider = null)
         {
             this.helper = helper;
@@ -664,11 +661,12 @@ namespace ZoneLockChallenge
             if (actual > 0 && contributor.Money < actual) { failReason = "Not enough gold."; return false; }
 
             // Check items BEFORE recording gold, so a failed item-only retry changes no state.
+            var effectiveItems = GetEffectiveItems(zone);
             bool itemsMet;
             if (isLocal)
             {
                 itemsMet = true;
-                foreach (var itemCost in GetEffectiveItems(zone))
+                foreach (var itemCost in effectiveItems)
                     if (CountItemInInventory(contributor, itemCost.ItemId) < itemCost.Count)
                     { itemsMet = false; break; }
             }
@@ -699,7 +697,7 @@ namespace ZoneLockChallenge
                 {
                     if (isLocal)
                     {
-                        foreach (var itemCost in GetEffectiveItems(zone))
+                        foreach (var itemCost in effectiveItems)
                             RemoveItemsFromInventory(contributor, itemCost.ItemId, itemCost.Count);
                         GiveRewards(zone);
                     }
@@ -803,7 +801,7 @@ namespace ZoneLockChallenge
             return true;
         }
 
-        private int CountItemInInventory(Farmer farmer, string qualifiedItemId)
+        public int CountItemInInventory(Farmer farmer, string qualifiedItemId)
         {
             int count = 0;
             foreach (var item in farmer.Items)
@@ -1076,25 +1074,18 @@ namespace ZoneLockChallenge
         }
 
         /// <summary>Returns zone IDs where the local player holds a ticket valid today. Read-only.</summary>
-        public List<string> GetLocalActiveTicketZones()
-        {
-            int today = Game1.Date.TotalDays;
-            long localId = Game1.player.UniqueMultiplayerID;
-            var result = new List<string>();
-            foreach (var kv in State.ActiveTickets)
-                if (kv.Value.TryGetValue(localId, out int day) && day == today)
-                    result.Add(kv.Key);
-            return result;
-        }
+        public List<string> GetLocalActiveTicketZones() => GetLocalTicketZones((day, today) => day == today);
 
         /// <summary>Returns zone IDs where the local player had a ticket yesterday (or earlier) that no longer applies today. Read-only — does not modify state.</summary>
-        public List<string> GetLocalExpiredTicketZones()
+        public List<string> GetLocalExpiredTicketZones() => GetLocalTicketZones((day, today) => day < today);
+
+        private List<string> GetLocalTicketZones(Func<int, int, bool> match)
         {
             int today = Game1.Date.TotalDays;
             long localId = Game1.player.UniqueMultiplayerID;
             var result = new List<string>();
             foreach (var kv in State.ActiveTickets)
-                if (kv.Value.TryGetValue(localId, out int day) && day < today)
+                if (kv.Value.TryGetValue(localId, out int day) && match(day, today))
                     result.Add(kv.Key);
             return result;
         }

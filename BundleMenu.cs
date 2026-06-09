@@ -43,6 +43,9 @@ namespace ZoneLockChallenge
         private bool waitingForResponse;
         private int responseTimeoutMs;
         private const int ResponseTimeoutTotalMs = 10000;
+        /// <summary>Zone/bundle ID of the request this menu sent and is awaiting. Responses for
+        /// other IDs (sent from a previously closed menu) are ignored.</summary>
+        private string pendingRequestId;
 
         private bool showRunLog;
         private int logScrollOffset;
@@ -83,7 +86,7 @@ namespace ZoneLockChallenge
             this.onRequestBundleEdit = onRequestBundleEdit;
 
             if (purchaseEnabled)
-                stateManager.SubscribePurchaseResponse(OnPurchaseResponse);
+                stateManager.OnPurchaseResponse += OnPurchaseResponse;
 
             RefreshSidebar();
             foreach (var zone in orderedZones)
@@ -123,7 +126,7 @@ namespace ZoneLockChallenge
         protected override void cleanupBeforeExit()
         {
             if (purchaseEnabled)
-                stateManager.UnsubscribePurchaseResponse(OnPurchaseResponse);
+                stateManager.OnPurchaseResponse -= OnPurchaseResponse;
             base.cleanupBeforeExit();
         }
 
@@ -133,6 +136,7 @@ namespace ZoneLockChallenge
             // the menu is open, and a positional index would then point at the wrong zone.
             string prevZoneId = IsZoneIndex(selectedIndex) ? orderedZones[selectedIndex].ZoneId : null;
             string prevBundleId = IsBundleIndex(selectedIndex) ? GetBundleAt(selectedIndex).BundleId : null;
+            bool prevWasNewBundleSlot = IsNewBundleIndex(selectedIndex);
 
             orderedZones = stateManager.GetOrderedZones();
             customBundles = stateManager.GetCustomBundles().ToList();
@@ -147,8 +151,24 @@ namespace ZoneLockChallenge
                 int idx = customBundles.FindIndex(bd => bd.BundleId == prevBundleId);
                 if (idx >= 0) selectedIndex = orderedZones.Count + idx;
             }
+            else if (prevWasNewBundleSlot)
+            {
+                // The "+ New Bundle" slot moves when entries are added; follow it
+                selectedIndex = TotalEntries - 1;
+            }
             if (selectedIndex >= TotalEntries)
                 selectedIndex = Math.Max(0, TotalEntries - 1);
+
+            // Keep the scroll window valid and the selected row visible
+            // (maxVisibleRows is 0 during the constructor's first call, before SetupLayout)
+            if (maxVisibleRows > 0)
+            {
+                scrollOffset = Math.Min(scrollOffset, Math.Max(0, TotalEntries - maxVisibleRows));
+                if (selectedIndex < scrollOffset)
+                    scrollOffset = selectedIndex;
+                else if (selectedIndex >= scrollOffset + maxVisibleRows)
+                    scrollOffset = selectedIndex - maxVisibleRows + 1;
+            }
         }
 
         private void SetupLayout()
@@ -263,9 +283,11 @@ namespace ZoneLockChallenge
                     int dataIndex = scrollOffset + i;
                     if (IsNewBundleIndex(dataIndex))
                     {
-                        onRequestBundleEdit.Invoke(null);
+                        // Close before invoking: exitThisMenu() nulls Game1.activeClickableMenu,
+                        // which would destroy the editor menu the callback opens.
                         Game1.playSound("smallSelect");
                         exitThisMenu();
+                        onRequestBundleEdit.Invoke(null);
                         return;
                     }
                     if (dataIndex < TotalEntries) { selectedIndex = dataIndex; Game1.playSound("smallSelect"); }
@@ -297,9 +319,10 @@ namespace ZoneLockChallenge
                 Rectangle moveArea = new(linksStartX, linkY, (int)moveSize.X, (int)moveSize.Y);
                 if (moveArea.Contains(x, y))
                 {
-                    onRequestPlatePlacement.Invoke(orderedZones[selectedIndex].ZoneId);
+                    string zoneId = orderedZones[selectedIndex].ZoneId;
                     Game1.playSound("smallSelect");
                     exitThisMenu();
+                    onRequestPlatePlacement.Invoke(zoneId);
                     return;
                 }
 
@@ -307,9 +330,12 @@ namespace ZoneLockChallenge
                 Rectangle editArea = new(editX, linkY, (int)editSize.X, (int)editSize.Y);
                 if (editArea.Contains(x, y) && onRequestZoneEdit != null)
                 {
-                    onRequestZoneEdit.Invoke(orderedZones[selectedIndex].ZoneId);
+                    // Close before invoking: exitThisMenu() nulls Game1.activeClickableMenu,
+                    // which would destroy the editor menu the callback opens.
+                    string zoneId = orderedZones[selectedIndex].ZoneId;
                     Game1.playSound("smallSelect");
                     exitThisMenu();
+                    onRequestZoneEdit.Invoke(zoneId);
                     return;
                 }
             }
@@ -324,9 +350,11 @@ namespace ZoneLockChallenge
                 Rectangle editArea = new(editX, linkY, (int)editSize.X, (int)editSize.Y);
                 if (editArea.Contains(x, y))
                 {
-                    onRequestBundleEdit.Invoke(GetBundleAt(selectedIndex).BundleId);
+                    // Close before invoking (see "Edit Zone" above)
+                    string bundleId = GetBundleAt(selectedIndex).BundleId;
                     Game1.playSound("smallSelect");
                     exitThisMenu();
+                    onRequestBundleEdit.Invoke(bundleId);
                     return;
                 }
             }
@@ -381,13 +409,15 @@ namespace ZoneLockChallenge
                 if (responseTimeoutMs <= 0)
                 {
                     waitingForResponse = false;
+                    pendingRequestId = null;
                     ShowStatus("No response from the host — please try again.", true);
                 }
             }
         }
 
-        private void BeginWaitingForResponse()
+        private void BeginWaitingForResponse(string requestId)
         {
+            pendingRequestId = requestId;
             waitingForResponse = true;
             responseTimeoutMs = ResponseTimeoutTotalMs;
             ShowStatus("Processing...", false);
@@ -433,8 +463,7 @@ namespace ZoneLockChallenge
             var effectiveItems = stateManager.GetEffectiveItems(zone);
             foreach (var item in effectiveItems)
             {
-                int have = 0;
-                foreach (var inv in farmer.Items) if (inv != null && inv.QualifiedItemId == item.ItemId) have += inv.Stack;
+                int have = stateManager.CountItemInInventory(farmer, item.ItemId);
                 if (have < item.Count) { ShowStatus($"Need {item.Count}x {item.DisplayName} (have {have})", true); return; }
             }
 
@@ -445,7 +474,7 @@ namespace ZoneLockChallenge
                 ShowStatus(msg, false);
                 Game1.playSound("purchaseClick");
             }
-            else BeginWaitingForResponse();
+            else BeginWaitingForResponse(zone.ZoneId);
         }
 
         private void TryPurchaseBundle(CustomBundle bundle)
@@ -455,8 +484,7 @@ namespace ZoneLockChallenge
             if (farmer.Money < bundle.MoneyCost) { ShowStatus("Not enough gold!", true); return; }
             foreach (var item in bundle.Items)
             {
-                int have = 0;
-                foreach (var inv in farmer.Items) if (inv != null && inv.QualifiedItemId == item.ItemId) have += inv.Stack;
+                int have = stateManager.CountItemInInventory(farmer, item.ItemId);
                 if (have < item.Count) { ShowStatus($"Need {item.Count}x {item.DisplayName} (have {have})", true); return; }
             }
 
@@ -467,7 +495,7 @@ namespace ZoneLockChallenge
                 Game1.playSound("purchaseClick");
                 RefreshSidebar();
             }
-            else BeginWaitingForResponse();
+            else BeginWaitingForResponse(bundle.BundleId);
         }
 
         private void TryContributeSelected()
@@ -496,8 +524,7 @@ namespace ZoneLockChallenge
                 // Gold goal is met — this click delivers the required items to finish the unlock.
                 foreach (var item in items)
                 {
-                    int have = 0;
-                    foreach (var inv in farmer.Items) if (inv != null && inv.QualifiedItemId == item.ItemId) have += inv.Stack;
+                    int have = stateManager.CountItemInInventory(farmer, item.ItemId);
                     if (have < item.Count) { ShowStatus($"Need {item.Count}x {item.DisplayName} (have {have})", true); return; }
                 }
             }
@@ -508,14 +535,16 @@ namespace ZoneLockChallenge
                 ShowStatus(contribution > 0 ? $"Contributed {contribution}g!" : $"{zone.DisplayName} unlocked!", false);
                 Game1.playSound("purchaseClick");
             }
-            else BeginWaitingForResponse();
+            else BeginWaitingForResponse(zone.ZoneId);
         }
 
         private void OnPurchaseResponse(ZonePurchaseResponse response)
         {
-            // A stale invocation can arrive for a menu that's no longer active (the request
-            // was sent from a menu the player has since closed) — ignore it.
+            // Ignore stale responses: ones for a menu that's no longer active, or for a request
+            // sent from a previously closed menu (this menu never asked about that ID).
             if (Game1.activeClickableMenu != this) return;
+            if (pendingRequestId == null || response.ZoneId != pendingRequestId) return;
+            pendingRequestId = null;
             waitingForResponse = false;
             ShowStatus(response.Message, !response.Success);
             if (response.Success) Game1.playSound("purchaseClick");
@@ -803,6 +832,8 @@ namespace ZoneLockChallenge
             b.DrawString(Game1.smallFont, costText, new Vector2(x + 30, y), canAffordGold ? Color.DarkGreen : Color.DarkRed);
             y += 36;
 
+            var effectiveItems = stateManager.GetEffectiveItems(zone);
+
             if (zone.UnlockType == "permanent" && !stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
             {
                 int totalContributed = stateManager.GetTotalContributions(zone.ZoneId);
@@ -821,7 +852,7 @@ namespace ZoneLockChallenge
                     b.Draw(Game1.fadeToBlackRect, new Rectangle(x + barWidth - 2, y, 2, barHeight), Color.SaddleBrown * 0.6f);
                     y += barHeight + 12;
 
-                    if (totalContributed >= scaledCost && stateManager.GetEffectiveItems(zone).Count > 0)
+                    if (totalContributed >= scaledCost && effectiveItems.Count > 0)
                     {
                         b.DrawString(Game1.smallFont, "Fully funded — deliver the items to unlock!", new Vector2(x, y), Color.DarkGoldenrod);
                         y += 28;
@@ -830,7 +861,6 @@ namespace ZoneLockChallenge
             }
 
             // Item costs with icons (using effective items from overrides)
-            var effectiveItems = stateManager.GetEffectiveItems(zone);
             if (effectiveItems.Count > 0)
             {
                 b.DrawString(Game1.smallFont, "Items required:", new Vector2(x, y), Game1.textColor);

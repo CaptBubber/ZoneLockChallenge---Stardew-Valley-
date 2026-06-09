@@ -32,6 +32,21 @@ namespace ZoneLockChallenge
         public ZoneDefinition GetZoneById(string zoneId) =>
             Zones.FirstOrDefault(z => z.ZoneId == zoneId);
 
+        /// <summary>Copy all settings from another instance onto this one. Used by zlc_reload:
+        /// other classes hold a reference to the live config object, so the values must be
+        /// copied in place. Keep in sync with the property list above.</summary>
+        public void CopyFrom(ModConfig other)
+        {
+            OpenMenuKey = other.OpenMenuKey;
+            ShowBlockedMessage = other.ShowBlockedMessage;
+            PreventFriendshipDecay = other.PreventFriendshipDecay;
+            CostScalingPercent = other.CostScalingPercent;
+            BeachMinecart = other.BeachMinecart;
+            SecondaryBeachBypass = other.SecondaryBeachBypass;
+            MineLevelGates = other.MineLevelGates;
+            Zones = other.Zones;
+        }
+
         public List<ZoneDefinition> Zones { get; set; } = new()
         {
             new ZoneDefinition

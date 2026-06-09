@@ -325,18 +325,12 @@ namespace ZoneLockChallenge
                     }
 
                     var layer = e.OldLocation.Map?.Layers?.Count > 0 ? e.OldLocation.Map.Layers[0] : null;
-                    if (foundWarp && layer != null)
+                    if (!foundWarp || layer == null)
                     {
-                        // Landing exactly on the warp trigger tile would immediately re-fire the
-                        // warp into the locked zone (bounce loop), and trigger tiles often sit in
-                        // doorframes or at map edges. Step one tile toward the map interior.
-                        warpX += Math.Sign(layer.LayerWidth / 2 - warpX);
-                        warpY += Math.Sign(layer.LayerHeight / 2 - warpY);
-                    }
-                    else if (!foundWarp)
-                    {
-                        // No warp found: prefer the last tracked safe spot if its location is
-                        // still accessible (map centers are frequently water or buildings).
+                        // No usable return point in the old location (a layerless map gives no
+                        // safe way to step off the warp trigger tile). Prefer the last tracked
+                        // safe spot if its location is still accessible — map centers are
+                        // frequently water or buildings, so they're not a fallback.
                         var lastSafeZone = stateManager.GetZoneForLocation(lastSafeLocationName);
                         bool lastSafeOk = IsFarmLocation(lastSafeLocationName)
                             || lastSafeZone == null
@@ -349,6 +343,12 @@ namespace ZoneLockChallenge
                         Game1.warpFarmer("Farm", 64, 15, false);
                         return;
                     }
+
+                    // Landing exactly on the warp trigger tile would immediately re-fire the
+                    // warp into the locked zone (bounce loop), and trigger tiles often sit in
+                    // doorframes or at map edges. Step one tile toward the map interior.
+                    warpX += Math.Sign(layer.LayerWidth / 2 - warpX);
+                    warpY += Math.Sign(layer.LayerHeight / 2 - warpY);
                 }
 
                 Game1.warpFarmer(oldLocationName, warpX, warpY, false);
@@ -360,12 +360,15 @@ namespace ZoneLockChallenge
         /// <summary>Show a blocked-entry HUD message, but not more than once per few seconds for
         /// the same target — repeatedly bumping a locked border shouldn't stack red messages.</summary>
         private void ShowBlockedMessage(string key, string message)
+            => ShowBlockedMessage(key, message, HUDMessage.error_type);
+
+        private void ShowBlockedMessage(string key, string message, int messageType)
         {
             if (!config.ShowBlockedMessage) return;
             if (key == lastBlockedMsgKey && plateAnimTimer - lastBlockedMsgAt < 3f) return;
             lastBlockedMsgKey = key;
             lastBlockedMsgAt = plateAnimTimer;
-            Game1.addHUDMessage(new HUDMessage(message, HUDMessage.error_type));
+            Game1.addHUDMessage(new HUDMessage(message, messageType));
         }
 
         private bool IsFarmLocation(string name) =>
@@ -439,13 +442,8 @@ namespace ZoneLockChallenge
                     if (zone.UnlockType == "permanent" && stateManager.IsZonePermanentlyUnlocked(zone.ZoneId))
                     {
                         // Plate completed and no longer drawn — give light feedback instead of
-                        // silently swallowing the click (cooldown stops it from spamming)
-                        if (lastBlockedMsgKey != $"plate_{zone.ZoneId}" || plateAnimTimer - lastBlockedMsgAt >= 3f)
-                        {
-                            lastBlockedMsgKey = $"plate_{zone.ZoneId}";
-                            lastBlockedMsgAt = plateAnimTimer;
-                            Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} is already unlocked.", HUDMessage.newQuest_type));
-                        }
+                        // silently swallowing the click
+                        ShowBlockedMessage($"plate_{zone.ZoneId}", $"{zone.DisplayName} is already unlocked.", HUDMessage.newQuest_type);
                         return;
                     }
 
@@ -693,14 +691,7 @@ namespace ZoneLockChallenge
             var fresh = Helper.ReadConfig<ModConfig>();
             // Other classes hold a reference to the existing config object, so copy the values
             // onto it rather than swapping the reference.
-            config.OpenMenuKey = fresh.OpenMenuKey;
-            config.ShowBlockedMessage = fresh.ShowBlockedMessage;
-            config.PreventFriendshipDecay = fresh.PreventFriendshipDecay;
-            config.CostScalingPercent = fresh.CostScalingPercent;
-            config.BeachMinecart = fresh.BeachMinecart;
-            config.SecondaryBeachBypass = fresh.SecondaryBeachBypass;
-            config.MineLevelGates = fresh.MineLevelGates;
-            config.Zones = fresh.Zones;
+            config.CopyFrom(fresh);
 
             contentProvider.InvalidateAllCaches();
             ValidateConfig();

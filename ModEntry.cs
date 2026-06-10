@@ -909,6 +909,40 @@ namespace ZoneLockChallenge
                 if (locName == sb.BeachLocation)
                     DrawSignSprite(b, sb.BeachSignX, sb.BeachSignY, sb.OtherLocation);
             }
+
+            // Plate placement ghost cursor: show a semi-transparent plate at the cursor tile
+            if (platePlacementZoneId != null)
+            {
+                var zone = stateManager.GetZoneById(platePlacementZoneId);
+                if (zone != null)
+                {
+                    var cursorTile = Game1.currentCursorTile;
+                    int tileX = (int)cursorTile.X;
+                    int tileY = (int)cursorTile.Y;
+
+                    // Highlight the target tile with a green tint
+                    Vector2 tileWorld = new(tileX * 64, tileY * 64);
+                    Vector2 tileScreen = Game1.GlobalToLocal(Game1.viewport, tileWorld);
+                    b.Draw(Game1.staminaRect, new Rectangle((int)tileScreen.X, (int)tileScreen.Y, 64, 64),
+                        Color.Green * 0.35f);
+
+                    // Draw a ghost plate sprite at the cursor tile
+                    bool isTicket = zone.UnlockType == "ticket";
+                    var texture = contentProvider.GetSprites();
+                    Rectangle srcRect = isTicket ? new Rectangle(16, 0, 16, 16) : new Rectangle(0, 0, 16, 16);
+                    b.Draw(texture,
+                        new Vector2(tileScreen.X + 8, tileScreen.Y - 16),
+                        srcRect, Color.White * 0.6f, 0f, Vector2.Zero, 3f, SpriteEffects.None, 0.99f);
+
+                    // Label under the ghost
+                    string label = zone.DisplayName ?? zone.BundleName ?? platePlacementZoneId;
+                    Vector2 textSize = Game1.smallFont.MeasureString(label);
+                    float textScale = Math.Min(1f, 180f / textSize.X);
+                    Vector2 textPos = new(tileScreen.X + 32 - textSize.X * textScale / 2, tileScreen.Y + 40);
+                    b.DrawString(Game1.smallFont, label, textPos + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, textScale, SpriteEffects.None, 0.991f);
+                    b.DrawString(Game1.smallFont, label, textPos, Color.White * 0.7f, 0f, Vector2.Zero, textScale, SpriteEffects.None, 0.992f);
+                }
+            }
         }
 
         private void DrawPlateSprite(SpriteBatch b, ZoneDefinition zone, PlateTile plate)

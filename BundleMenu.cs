@@ -1031,7 +1031,6 @@ namespace ZoneLockChallenge
             {
                 int infoY = purchaseButton.bounds.Bottom + 12;
 
-                // "Move Plate" and "Edit Zone" links side by side
                 string moveText = "Move Plate";
                 string editText = "Edit Zone";
                 Vector2 moveSize = Game1.smallFont.MeasureString(moveText);
@@ -1040,14 +1039,21 @@ namespace ZoneLockChallenge
                 int totalLinksWidth = (int)moveSize.X + 24 + (int)editSize.X;
                 int linksStartX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - totalLinksWidth) / 2;
 
-                // "Move Plate" link
-                b.DrawString(Game1.smallFont, moveText, new Vector2(linksStartX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
-                b.DrawString(Game1.smallFont, moveText, new Vector2(linksStartX, linkY), Color.SaddleBrown, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                int mx = Game1.getMouseX();
+                int my = Game1.getMouseY();
 
-                // "Edit Zone" link
+                Rectangle moveArea = new(linksStartX, linkY, (int)moveSize.X, (int)moveSize.Y);
+                bool moveHover = moveArea.Contains(mx, my);
+                Color moveColor = moveHover ? Color.DarkOrange : Color.SaddleBrown;
+                b.DrawString(Game1.smallFont, moveText, new Vector2(linksStartX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                b.DrawString(Game1.smallFont, moveText, new Vector2(linksStartX, linkY), moveColor, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+
                 int editX = linksStartX + (int)moveSize.X + 24;
+                Rectangle editArea = new(editX, linkY, (int)editSize.X, (int)editSize.Y);
+                bool editHover = editArea.Contains(mx, my);
+                Color editColor = editHover ? Color.DarkOrange : Color.SaddleBrown;
                 b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
-                b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY), Color.SaddleBrown, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY), editColor, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
             }
         }
 
@@ -1147,8 +1153,11 @@ namespace ZoneLockChallenge
                 Vector2 editSize = Game1.smallFont.MeasureString(editText);
                 int linkY = purchaseButton.bounds.Bottom + 12;
                 int editX = purchaseButton.bounds.X + (purchaseButton.bounds.Width - (int)editSize.X) / 2;
+                Rectangle editArea = new(editX, linkY, (int)editSize.X, (int)editSize.Y);
+                bool editHover = editArea.Contains(Game1.getMouseX(), Game1.getMouseY());
+                Color editColor = editHover ? Color.DarkOrange : Color.SaddleBrown;
                 b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY) + new Vector2(1, 1), Color.Black * 0.3f, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
-                b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY), Color.SaddleBrown, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
+                b.DrawString(Game1.smallFont, editText, new Vector2(editX, linkY), editColor, 0f, Vector2.Zero, 1f, SpriteEffects.None, 1f);
             }
         }
 

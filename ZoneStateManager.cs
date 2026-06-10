@@ -511,6 +511,50 @@ namespace ZoneLockChallenge
             return required;
         }
 
+        // ── Skull Cavern gates ──────────────────────────────────────
+
+        public List<DungeonGate> GetEffectiveSkullCavernGates()
+        {
+            if (contentProvider != null)
+            {
+                try { return contentProvider.LoadSkullCavernGates(); }
+                catch (Exception ex) { monitor.Log($"Failed to load Skull Cavern gates from content: {ex.Message}", LogLevel.Warn); }
+            }
+            return config.SkullCavernGates ?? new List<DungeonGate>();
+        }
+
+        public bool IsDungeonFloorAllowed(List<DungeonGate> gates, int floor)
+        {
+            foreach (var gate in gates)
+                if (floor >= gate.FloorNumber && GetCollectiveSkillLevel(gate.RequiredSkill ?? "Combat") < gate.RequiredLevel)
+                    return false;
+            return true;
+        }
+
+        public (string skill, int required, int current)? GetBlockingDungeonGate(List<DungeonGate> gates, int floor)
+        {
+            foreach (var gate in gates)
+            {
+                string skill = gate.RequiredSkill ?? "Combat";
+                int current = GetCollectiveSkillLevel(skill);
+                if (floor >= gate.FloorNumber && current < gate.RequiredLevel)
+                    return (skill, gate.RequiredLevel, current);
+            }
+            return null;
+        }
+
+        // ── Volcano Dungeon gates ───────────────────────────────────
+
+        public List<DungeonGate> GetEffectiveVolcanoGates()
+        {
+            if (contentProvider != null)
+            {
+                try { return contentProvider.LoadVolcanoGates(); }
+                catch (Exception ex) { monitor.Log($"Failed to load Volcano gates from content: {ex.Message}", LogLevel.Warn); }
+            }
+            return config.VolcanoGates ?? new List<DungeonGate>();
+        }
+
         // ── Custom bundles ───────────────────────────────────────────
 
         public List<CustomBundle> GetCustomBundles() => State.CustomBundles;

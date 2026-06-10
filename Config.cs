@@ -29,6 +29,12 @@ namespace ZoneLockChallenge
             new MineLevelGate { FloorNumber = 100, RequiredMiningLevel = 10 }
         };
 
+        /// <summary>Skull Cavern floor gates. Requires the Desert zone to be unlocked. Default: none (all floors open once Desert is unlocked).</summary>
+        public List<DungeonGate> SkullCavernGates { get; set; } = new();
+
+        /// <summary>Volcano Dungeon floor gates (floors 0-9). Requires the Island zone to be unlocked. Default: none.</summary>
+        public List<DungeonGate> VolcanoGates { get; set; } = new();
+
         public ZoneDefinition GetZoneById(string zoneId) =>
             Zones.FirstOrDefault(z => z.ZoneId == zoneId);
 
@@ -44,6 +50,8 @@ namespace ZoneLockChallenge
             BeachMinecart = other.BeachMinecart;
             SecondaryBeachBypass = other.SecondaryBeachBypass;
             MineLevelGates = other.MineLevelGates;
+            SkullCavernGates = other.SkullCavernGates;
+            VolcanoGates = other.VolcanoGates;
             Zones = other.Zones;
         }
 
@@ -184,6 +192,14 @@ namespace ZoneLockChallenge
     {
         public int FloorNumber { get; set; }
         public int RequiredMiningLevel { get; set; }
+    }
+
+    /// <summary>A generic dungeon floor gate: players cannot descend past FloorNumber unless the collective skill level is met.</summary>
+    public class DungeonGate
+    {
+        public int FloorNumber { get; set; }
+        public string RequiredSkill { get; set; } = "Combat";
+        public int RequiredLevel { get; set; }
     }
 
     public class ZoneConfigOverride

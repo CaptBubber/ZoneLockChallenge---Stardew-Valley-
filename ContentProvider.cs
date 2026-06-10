@@ -14,6 +14,8 @@ namespace ZoneLockChallenge
         private const string ZoneDataAssetName = "Mods/ZoneLockChallenge/ZoneData";
         private const string RewardsAssetName = "Mods/ZoneLockChallenge/Rewards";
         private const string MineGatesAssetName = "Mods/ZoneLockChallenge/MineGates";
+        private const string SkullCavernGatesAssetName = "Mods/ZoneLockChallenge/SkullCavernGates";
+        private const string VolcanoGatesAssetName = "Mods/ZoneLockChallenge/VolcanoGates";
 
         private readonly IModHelper helper;
         private readonly ModConfig config;
@@ -40,6 +42,8 @@ namespace ZoneLockChallenge
             helper.GameContent.InvalidateCache(ZoneDataAssetName);
             helper.GameContent.InvalidateCache(RewardsAssetName);
             helper.GameContent.InvalidateCache(MineGatesAssetName);
+            helper.GameContent.InvalidateCache(SkullCavernGatesAssetName);
+            helper.GameContent.InvalidateCache(VolcanoGatesAssetName);
         }
 
         public Dictionary<string, ZoneContentData> LoadZoneData()
@@ -55,6 +59,16 @@ namespace ZoneLockChallenge
         public List<MineLevelGate> LoadMineGates()
         {
             return helper.GameContent.Load<List<MineLevelGate>>(MineGatesAssetName);
+        }
+
+        public List<DungeonGate> LoadSkullCavernGates()
+        {
+            return helper.GameContent.Load<List<DungeonGate>>(SkullCavernGatesAssetName);
+        }
+
+        public List<DungeonGate> LoadVolcanoGates()
+        {
+            return helper.GameContent.Load<List<DungeonGate>>(VolcanoGatesAssetName);
         }
 
         private void OnAssetRequested(object sender, AssetRequestedEventArgs e)
@@ -74,6 +88,14 @@ namespace ZoneLockChallenge
             else if (e.NameWithoutLocale.IsEquivalentTo(MineGatesAssetName))
             {
                 e.LoadFrom(() => BuildDefaultMineGates(), AssetLoadPriority.Low);
+            }
+            else if (e.NameWithoutLocale.IsEquivalentTo(SkullCavernGatesAssetName))
+            {
+                e.LoadFrom(() => BuildDefaultDungeonGates(config.SkullCavernGates), AssetLoadPriority.Low);
+            }
+            else if (e.NameWithoutLocale.IsEquivalentTo(VolcanoGatesAssetName))
+            {
+                e.LoadFrom(() => BuildDefaultDungeonGates(config.VolcanoGates), AssetLoadPriority.Low);
             }
         }
 
@@ -123,6 +145,16 @@ namespace ZoneLockChallenge
             }).ToList() ?? new List<MineLevelGate>();
         }
 
+        private List<DungeonGate> BuildDefaultDungeonGates(List<DungeonGate> source)
+        {
+            return source?.Select(g => new DungeonGate
+            {
+                FloorNumber = g.FloorNumber,
+                RequiredSkill = g.RequiredSkill,
+                RequiredLevel = g.RequiredLevel
+            }).ToList() ?? new List<DungeonGate>();
+        }
+
         public void OnAssetInvalidated(object sender, AssetsInvalidatedEventArgs e)
         {
             foreach (var name in e.NamesWithoutLocale)
@@ -138,6 +170,8 @@ namespace ZoneLockChallenge
             helper.GameContent.InvalidateCache(ZoneDataAssetName);
             helper.GameContent.InvalidateCache(RewardsAssetName);
             helper.GameContent.InvalidateCache(MineGatesAssetName);
+            helper.GameContent.InvalidateCache(SkullCavernGatesAssetName);
+            helper.GameContent.InvalidateCache(VolcanoGatesAssetName);
         }
     }
 

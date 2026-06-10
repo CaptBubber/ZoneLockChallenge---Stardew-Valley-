@@ -323,7 +323,7 @@ namespace ZoneLockChallenge
             var zone = stateManager.GetZoneForLocation(newLocationName);
             if (zone == null) return;
 
-            // Mine floor gate check: even if the Mine zone is unlocked, specific floors may be gated
+            // Dungeon floor gate checks: even if the parent zone is unlocked, specific floors may be gated
             if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId))
             {
                 int mineFloor = ParseMineFloor(newLocationName);
@@ -332,13 +332,41 @@ namespace ZoneLockChallenge
                     int required = stateManager.GetRequiredMiningLevelForFloor(mineFloor);
                     int current = stateManager.GetCollectiveSkillLevel("Mining");
                     Monitor.Log($"Blocked {Game1.player.Name} from mine floor {mineFloor} (need collective Mining {required}, have {current}).", LogLevel.Info);
-
                     ShowBlockedMessage($"mine_{mineFloor}", $"Floor {mineFloor} is gated! Need collective Mining level {required} (have {current}).");
-
-                    isWarpingBack = true;
-                    warpBackFramesLeft = 12;
-                    Game1.warpFarmer(oldLocationName, lastSafeX, lastSafeY, false);
+                    WarpBackToPrevious(oldLocationName);
+                    return;
                 }
+
+                int skullFloor = ParseSkullCavernFloor(newLocationName);
+                if (skullFloor >= 0)
+                {
+                    var gates = stateManager.GetEffectiveSkullCavernGates();
+                    var blocking = stateManager.GetBlockingDungeonGate(gates, skullFloor);
+                    if (blocking.HasValue)
+                    {
+                        var (skill, required, current) = blocking.Value;
+                        Monitor.Log($"Blocked {Game1.player.Name} from Skull Cavern floor {skullFloor} (need collective {skill} {required}, have {current}).", LogLevel.Info);
+                        ShowBlockedMessage($"skull_{skullFloor}", $"Skull Cavern floor {skullFloor} is gated! Need collective {skill} level {required} (have {current}).");
+                        WarpBackToPrevious(oldLocationName);
+                        return;
+                    }
+                }
+
+                int volcanoFloor = ParseVolcanoFloor(newLocationName);
+                if (volcanoFloor >= 0)
+                {
+                    var gates = stateManager.GetEffectiveVolcanoGates();
+                    var blocking = stateManager.GetBlockingDungeonGate(gates, volcanoFloor);
+                    if (blocking.HasValue)
+                    {
+                        var (skill, required, current) = blocking.Value;
+                        Monitor.Log($"Blocked {Game1.player.Name} from Volcano floor {volcanoFloor} (need collective {skill} {required}, have {current}).", LogLevel.Info);
+                        ShowBlockedMessage($"volcano_{volcanoFloor}", $"Volcano floor {volcanoFloor} is gated! Need collective {skill} level {required} (have {current}).");
+                        WarpBackToPrevious(oldLocationName);
+                        return;
+                    }
+                }
+
                 return;
             }
 
@@ -433,6 +461,27 @@ namespace ZoneLockChallenge
         private static int ParseMineFloor(string locationName)
         {
             if (locationName != null && locationName.StartsWith("UndergroundMine") && int.TryParse(locationName.AsSpan(15), out int floor))
+                return floor;
+            return -1;
+        }
+
+        private void WarpBackToPrevious(string oldLocationName)
+        {
+            isWarpingBack = true;
+            warpBackFramesLeft = 12;
+            Game1.warpFarmer(oldLocationName, lastSafeX, lastSafeY, false);
+        }
+
+        private static int ParseSkullCavernFloor(string locationName)
+        {
+            if (locationName != null && locationName.StartsWith("SkullCave") && int.TryParse(locationName.AsSpan(9), out int floor))
+                return floor;
+            return -1;
+        }
+
+        private static int ParseVolcanoFloor(string locationName)
+        {
+            if (locationName != null && locationName.StartsWith("VolcanoDungeon") && int.TryParse(locationName.AsSpan(14), out int floor))
                 return floor;
             return -1;
         }
@@ -712,6 +761,21 @@ namespace ZoneLockChallenge
                 Monitor.Log($"Mine gates (collective Mining: {mining}):", LogLevel.Info);
                 foreach (var gate in gates.OrderBy(g => g.FloorNumber))
                     Monitor.Log($"  Floor {gate.FloorNumber}: requires Mining {gate.RequiredMiningLevel}{(mining >= gate.RequiredMiningLevel ? " (met)" : "")}", LogLevel.Info);
+            }
+
+            LogDungeonGates("Skull Cavern", stateManager.GetEffectiveSkullCavernGates());
+            LogDungeonGates("Volcano", stateManager.GetEffectiveVolcanoGates());
+        }
+
+        private void LogDungeonGates(string dungeonName, List<DungeonGate> gates)
+        {
+            if (gates == null || gates.Count == 0) return;
+            Monitor.Log($"{dungeonName} gates:", LogLevel.Info);
+            foreach (var gate in gates.OrderBy(g => g.FloorNumber))
+            {
+                string skill = gate.RequiredSkill ?? "Combat";
+                int current = stateManager.GetCollectiveSkillLevel(skill);
+                Monitor.Log($"  Floor {gate.FloorNumber}: requires {skill} {gate.RequiredLevel}{(current >= gate.RequiredLevel ? " (met)" : $" (have {current})")}", LogLevel.Info);
             }
         }
 

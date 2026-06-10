@@ -54,6 +54,7 @@ namespace ZoneLockChallenge
                     menu.RefreshSidebar();
             };
 
+            helper.Events.GameLoop.GameLaunched += OnGameLaunched;
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
             helper.Events.GameLoop.Saving += OnSaving;
             helper.Events.GameLoop.DayStarted += OnDayStarted;
@@ -99,6 +100,57 @@ namespace ZoneLockChallenge
             ValidateConfig();
 
             Monitor.Log("Zone Lock Challenge loaded. Press " + config.OpenMenuKey + " to view zones. Visit zone plates to purchase.", LogLevel.Info);
+        }
+
+        private void OnGameLaunched(object sender, GameLaunchedEventArgs e)
+        {
+            var gmcm = Helper.ModRegistry.GetApi<IGenericModConfigMenuApi>("spacechase0.GenericModConfigMenu");
+            if (gmcm == null) return;
+
+            gmcm.Register(
+                mod: ModManifest,
+                reset: () =>
+                {
+                    var fresh = new ModConfig();
+                    config.CopyFrom(fresh);
+                },
+                save: () => Helper.WriteConfig(config)
+            );
+
+            gmcm.AddKeybind(
+                mod: ModManifest,
+                getValue: () => Enum.TryParse<SButton>(config.OpenMenuKey, true, out var btn) ? btn : SButton.K,
+                setValue: val => config.OpenMenuKey = val.ToString(),
+                name: () => "Open Menu Key",
+                tooltip: () => "Key to open the zone overview menu."
+            );
+
+            gmcm.AddBoolOption(
+                mod: ModManifest,
+                getValue: () => config.ShowBlockedMessage,
+                setValue: val => config.ShowBlockedMessage = val,
+                name: () => "Show Blocked Messages",
+                tooltip: () => "Show a HUD message when entering a locked zone or interacting with a completed plate."
+            );
+
+            gmcm.AddBoolOption(
+                mod: ModManifest,
+                getValue: () => config.PreventFriendshipDecay,
+                setValue: val => config.PreventFriendshipDecay = val,
+                name: () => "Prevent Friendship Decay",
+                tooltip: () => "Restore overnight friendship point loss so NPCs in locked zones don't penalise you."
+            );
+
+            gmcm.AddNumberOption(
+                mod: ModManifest,
+                getValue: () => config.CostScalingPercent,
+                setValue: val => config.CostScalingPercent = val,
+                name: () => "Cost Scaling %",
+                tooltip: () => "Extra percentage added to a zone's gold cost for each zone already unlocked. 0 disables scaling.",
+                min: 0,
+                max: 200,
+                interval: 5
+            );
         }
 
         // ── Lifecycle ────────────────────────────────────────────────

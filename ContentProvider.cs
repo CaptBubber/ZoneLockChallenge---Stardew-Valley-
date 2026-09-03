@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -22,6 +23,10 @@ namespace ZoneLockChallenge
 
         private Texture2D spritesTexture;
 
+        /// <summary>Raised when a data asset (zone data, rewards, gates) is invalidated, so
+        /// dependent caches (e.g. ZoneStateManager's zone list) can be dropped too.</summary>
+        public Action OnDataInvalidated;
+
         public ContentProvider(IModHelper helper, ModConfig config)
         {
             this.helper = helper;
@@ -33,17 +38,6 @@ namespace ZoneLockChallenge
         {
             spritesTexture ??= helper.GameContent.Load<Texture2D>(SpriteAssetName);
             return spritesTexture;
-        }
-
-        public void InvalidateCache()
-        {
-            spritesTexture = null;
-            helper.GameContent.InvalidateCache(SpriteAssetName);
-            helper.GameContent.InvalidateCache(ZoneDataAssetName);
-            helper.GameContent.InvalidateCache(RewardsAssetName);
-            helper.GameContent.InvalidateCache(MineGatesAssetName);
-            helper.GameContent.InvalidateCache(SkullCavernGatesAssetName);
-            helper.GameContent.InvalidateCache(VolcanoGatesAssetName);
         }
 
         public Dictionary<string, ZoneContentData> LoadZoneData()
@@ -157,16 +151,26 @@ namespace ZoneLockChallenge
 
         public void OnAssetInvalidated(object sender, AssetsInvalidatedEventArgs e)
         {
+            bool dataChanged = false;
             foreach (var name in e.NamesWithoutLocale)
             {
                 if (name.IsEquivalentTo(SpriteAssetName))
                     spritesTexture = null;
+                else if (name.IsEquivalentTo(ZoneDataAssetName) || name.IsEquivalentTo(RewardsAssetName)
+                    || name.IsEquivalentTo(MineGatesAssetName) || name.IsEquivalentTo(SkullCavernGatesAssetName)
+                    || name.IsEquivalentTo(VolcanoGatesAssetName))
+                    dataChanged = true;
             }
+            if (dataChanged)
+                OnDataInvalidated?.Invoke();
         }
 
+        /// <summary>Invalidate every asset this mod serves (sprites + all data assets), forcing
+        /// a rebuild from the current config on next load.</summary>
         public void InvalidateAllCaches()
         {
             spritesTexture = null;
+            helper.GameContent.InvalidateCache(SpriteAssetName);
             helper.GameContent.InvalidateCache(ZoneDataAssetName);
             helper.GameContent.InvalidateCache(RewardsAssetName);
             helper.GameContent.InvalidateCache(MineGatesAssetName);

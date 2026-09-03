@@ -99,6 +99,14 @@ namespace ZoneLockChallenge
 
         public ZoneSaveData State { get; private set; } = new();
 
+        // Zone-list cache: GetContentZones is called every tick (location checks) and every
+        // frame (plate rendering), so rebuilding the list from content each call is wasteful.
+        // Invalidated via InvalidateZoneCache() whenever content assets or config change.
+        private List<ZoneDefinition> cachedZones;
+        private Dictionary<string, ZoneDefinition> zoneByIdLookup;
+        private Dictionary<string, ZoneDefinition> zoneByLocationLookup;
+        private List<(string prefix, ZoneDefinition zone)> zoneLocationPrefixes;
+
         /// <summary>Callback invoked after any purchase completes (host or farmhand). Used to refresh plates.</summary>
         public Action OnStateChanged;
         /// <summary>Raised on a farmhand when the host answers a purchase/contribute/bundle request.
@@ -296,14 +304,24 @@ namespace ZoneLockChallenge
             && playerTickets.TryGetValue(farmerId, out int ticketDay)
             && ticketDay == Game1.Date.TotalDays;
 
+        /// <summary>Drop the cached zone list and lookups. Call after content assets or config change.</summary>
+        public void InvalidateZoneCache()
+        {
+            cachedZones = null;
+            zoneByIdLookup = null;
+            zoneByLocationLookup = null;
+            zoneLocationPrefixes = null;
+        }
+
         public List<ZoneDefinition> GetContentZones()
         {
+            if (cachedZones != null) return cachedZones;
             if (contentProvider != null)
             {
                 try
                 {
                     var data = contentProvider.LoadZoneData();
-                    return data.Where(kv => !string.IsNullOrEmpty(kv.Key)).Select(kv => new ZoneDefinition
+                    return cachedZones = data.Where(kv => !string.IsNullOrEmpty(kv.Key)).Select(kv => new ZoneDefinition
                     {
                         ZoneId = kv.Key,
                         DisplayName = kv.Value.DisplayName,
@@ -326,26 +344,45 @@ namespace ZoneLockChallenge
                 catch (Exception ex) { monitor.Log($"Failed to load zone data from content: {ex.Message}", LogLevel.Warn); }
             }
             // A zone with no ZoneId can't be referenced and would NRE in location matching
-            return config.Zones.Where(z => !string.IsNullOrEmpty(z.ZoneId)).ToList();
+            return cachedZones = config.Zones.Where(z => !string.IsNullOrEmpty(z.ZoneId)).ToList();
         }
 
         public ZoneDefinition GetZoneById(string zoneId)
         {
-            return GetContentZones().FirstOrDefault(z => z.ZoneId == zoneId) ?? config.GetZoneById(zoneId);
+            if (string.IsNullOrEmpty(zoneId)) return null;
+            if (zoneByIdLookup == null)
+            {
+                zoneByIdLookup = new Dictionary<string, ZoneDefinition>();
+                foreach (var zone in GetContentZones())
+                    zoneByIdLookup.TryAdd(zone.ZoneId, zone);
+            }
+            return zoneByIdLookup.TryGetValue(zoneId, out var found) ? found : config.GetZoneById(zoneId);
         }
 
         public ZoneDefinition GetZoneForLocation(string locationName)
         {
             if (string.IsNullOrEmpty(locationName)) return null;
-            foreach (var zone in GetContentZones())
+            if (zoneByLocationLookup == null)
             {
-                if (zone.LocationNames != null && zone.LocationNames.Any(n => string.Equals(n, locationName, StringComparison.OrdinalIgnoreCase)))
-                    return zone;
-                if (zone.LocationPrefixes != null)
-                    foreach (var prefix in zone.LocationPrefixes)
-                        if (locationName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                            return zone;
+                zoneByLocationLookup = new Dictionary<string, ZoneDefinition>(StringComparer.OrdinalIgnoreCase);
+                zoneLocationPrefixes = new List<(string prefix, ZoneDefinition zone)>();
+                foreach (var zone in GetContentZones())
+                {
+                    if (zone.LocationNames != null)
+                        foreach (var name in zone.LocationNames)
+                            if (!string.IsNullOrEmpty(name))
+                                zoneByLocationLookup.TryAdd(name, zone);
+                    if (zone.LocationPrefixes != null)
+                        foreach (var prefix in zone.LocationPrefixes)
+                            if (!string.IsNullOrEmpty(prefix))
+                                zoneLocationPrefixes.Add((prefix, zone));
+                }
             }
+            if (zoneByLocationLookup.TryGetValue(locationName, out var match))
+                return match;
+            foreach (var (prefix, zone) in zoneLocationPrefixes)
+                if (locationName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return zone;
             return null;
         }
 
@@ -977,9 +1014,9 @@ namespace ZoneLockChallenge
 
             if (e.Type == SyncMessageType && !Context.IsMainPlayer)
             {
-                var sync = e.ReadAs<ZoneSyncMessage>();
-                State.UnlockedZones = sync.UnlockedZones;
-                State.ActiveTickets = sync.ActiveTickets;
+                var sync = e.ReadAs<ZoneSaveData>();
+                State.UnlockedZones = sync.UnlockedZones ?? new HashSet<string>();
+                State.ActiveTickets = sync.ActiveTickets ?? new Dictionary<string, Dictionary<long, int>>();
                 State.PlateOverrides = sync.PlateOverrides ?? new Dictionary<string, PlateTile>();
                 State.ZoneOverrides = sync.ZoneOverrides ?? new Dictionary<string, ZoneConfigOverride>();
                 State.ZoneOrder = sync.ZoneOrder ?? new List<string>();

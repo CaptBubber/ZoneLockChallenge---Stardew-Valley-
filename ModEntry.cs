@@ -47,6 +47,7 @@ namespace ZoneLockChallenge
             config = helper.ReadConfig<ModConfig>();
             contentProvider = new ContentProvider(helper, config);
             stateManager = new ZoneStateManager(helper, Monitor, config, contentProvider);
+            contentProvider.OnDataInvalidated = () => stateManager.InvalidateZoneCache();
 
             stateManager.OnStateChanged = () =>
             {
@@ -114,7 +115,14 @@ namespace ZoneLockChallenge
                     var fresh = new ModConfig();
                     config.CopyFrom(fresh);
                 },
-                save: () => Helper.WriteConfig(config)
+                save: () =>
+                {
+                    Helper.WriteConfig(config);
+                    // Content assets are built from config, so a config change must refresh them.
+                    contentProvider.InvalidateAllCaches();
+                    stateManager.InvalidateZoneCache();
+                    ValidateConfig();
+                }
             );
 
             gmcm.AddKeybind(
@@ -179,6 +187,8 @@ namespace ZoneLockChallenge
             ticketsActiveAtDayEnd = new List<string>();
             foreach (var zoneId in expired)
             {
+                // A zone permanently unlocked overnight needs no ticket — skip the expiry nag.
+                if (stateManager.IsZonePermanentlyUnlocked(zoneId)) continue;
                 var zone = stateManager.GetZoneById(zoneId);
                 if (zone != null)
                     Game1.addHUDMessage(new HUDMessage($"{zone.DisplayName} ticket expired. Visit the plate to buy a new one.", HUDMessage.error_type));
@@ -326,43 +336,36 @@ namespace ZoneLockChallenge
             // Dungeon floor gate checks: even if the parent zone is unlocked, specific floors may be gated
             if (stateManager.IsZoneAccessible(zone.ZoneId, farmerId))
             {
-                int mineFloor = ParseMineFloor(newLocationName);
+                // Regular mines use their own mining-level gate system.
+                int mineFloor = ParseDungeonFloor(newLocationName, "UndergroundMine");
                 if (mineFloor >= 0 && !stateManager.IsMineLevelAllowed(mineFloor))
                 {
                     int required = stateManager.GetRequiredMiningLevelForFloor(mineFloor);
                     int current = stateManager.GetCollectiveSkillLevel("Mining");
                     Monitor.Log($"Blocked {Game1.player.Name} from mine floor {mineFloor} (need collective Mining {required}, have {current}).", LogLevel.Info);
                     ShowBlockedMessage($"mine_{mineFloor}", $"Floor {mineFloor} is gated! Need collective Mining level {required} (have {current}).");
-                    WarpBackToPrevious(oldLocationName);
+                    WarpBackToPrevious();
                     return;
                 }
 
-                int skullFloor = ParseSkullCavernFloor(newLocationName);
-                if (skullFloor >= 0)
+                // Skull Cavern and Volcano share the skill-based DungeonGate system.
+                // To gate another dungeon, add its location prefix and gate loader here.
+                var dungeonGateChecks = new (string prefix, string label, Func<List<DungeonGate>> getGates)[]
                 {
-                    var gates = stateManager.GetEffectiveSkullCavernGates();
-                    var blocking = stateManager.GetBlockingDungeonGate(gates, skullFloor);
+                    ("SkullCave", "Skull Cavern", stateManager.GetEffectiveSkullCavernGates),
+                    ("VolcanoDungeon", "Volcano", stateManager.GetEffectiveVolcanoGates)
+                };
+                foreach (var (prefix, label, getGates) in dungeonGateChecks)
+                {
+                    int floor = ParseDungeonFloor(newLocationName, prefix);
+                    if (floor < 0) continue;
+                    var blocking = stateManager.GetBlockingDungeonGate(getGates(), floor);
                     if (blocking.HasValue)
                     {
                         var (skill, required, current) = blocking.Value;
-                        Monitor.Log($"Blocked {Game1.player.Name} from Skull Cavern floor {skullFloor} (need collective {skill} {required}, have {current}).", LogLevel.Info);
-                        ShowBlockedMessage($"skull_{skullFloor}", $"Skull Cavern floor {skullFloor} is gated! Need collective {skill} level {required} (have {current}).");
-                        WarpBackToPrevious(oldLocationName);
-                        return;
-                    }
-                }
-
-                int volcanoFloor = ParseVolcanoFloor(newLocationName);
-                if (volcanoFloor >= 0)
-                {
-                    var gates = stateManager.GetEffectiveVolcanoGates();
-                    var blocking = stateManager.GetBlockingDungeonGate(gates, volcanoFloor);
-                    if (blocking.HasValue)
-                    {
-                        var (skill, required, current) = blocking.Value;
-                        Monitor.Log($"Blocked {Game1.player.Name} from Volcano floor {volcanoFloor} (need collective {skill} {required}, have {current}).", LogLevel.Info);
-                        ShowBlockedMessage($"volcano_{volcanoFloor}", $"Volcano floor {volcanoFloor} is gated! Need collective {skill} level {required} (have {current}).");
-                        WarpBackToPrevious(oldLocationName);
+                        Monitor.Log($"Blocked {Game1.player.Name} from {label} floor {floor} (need collective {skill} {required}, have {current}).", LogLevel.Info);
+                        ShowBlockedMessage($"{prefix}_{floor}", $"{label} floor {floor} is gated! Need collective {skill} level {required} (have {current}).");
+                        WarpBackToPrevious();
                         return;
                     }
                 }
@@ -457,33 +460,23 @@ namespace ZoneLockChallenge
                 name == "Cellar" || name == "Greenhouse" ||
                 name.StartsWith("Cellar") || name.StartsWith("Cabin"));
 
-        /// <summary>Parse mine floor number from location name (e.g. "UndergroundMine25" → 25). Returns -1 if not a mine floor.</summary>
-        private static int ParseMineFloor(string locationName)
+        /// <summary>Parse a dungeon floor number from a location name (e.g. prefix "UndergroundMine"
+        /// turns "UndergroundMine25" into 25). Returns -1 if the name doesn't match the prefix.</summary>
+        private static int ParseDungeonFloor(string locationName, string prefix)
         {
-            if (locationName != null && locationName.StartsWith("UndergroundMine") && int.TryParse(locationName.AsSpan(15), out int floor))
+            if (locationName != null && locationName.StartsWith(prefix) && int.TryParse(locationName.AsSpan(prefix.Length), out int floor))
                 return floor;
             return -1;
         }
 
-        private void WarpBackToPrevious(string oldLocationName)
+        private void WarpBackToPrevious()
         {
             isWarpingBack = true;
             warpBackFramesLeft = 12;
-            Game1.warpFarmer(oldLocationName, lastSafeX, lastSafeY, false);
-        }
-
-        private static int ParseSkullCavernFloor(string locationName)
-        {
-            if (locationName != null && locationName.StartsWith("SkullCave") && int.TryParse(locationName.AsSpan(9), out int floor))
-                return floor;
-            return -1;
-        }
-
-        private static int ParseVolcanoFloor(string locationName)
-        {
-            if (locationName != null && locationName.StartsWith("VolcanoDungeon") && int.TryParse(locationName.AsSpan(14), out int floor))
-                return floor;
-            return -1;
+            // lastSafeX/Y were recorded in lastSafeLocationName, so always warp there —
+            // using them in a different map (e.g. after a totem warp straight into a gated
+            // floor) could land the player out of bounds.
+            Game1.warpFarmer(lastSafeLocationName, lastSafeX, lastSafeY, false);
         }
 
         // ── Input: K for read-only, action button for plates + minecart signs ─
@@ -810,6 +803,7 @@ namespace ZoneLockChallenge
             config.CopyFrom(fresh);
 
             contentProvider.InvalidateAllCaches();
+            stateManager.InvalidateZoneCache();
             ValidateConfig();
             Monitor.Log("Reloaded config.json and refreshed content assets. Note: in-game zone edits (save overrides) still take precedence over config values.", LogLevel.Info);
         }
